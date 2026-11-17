@@ -5,6 +5,7 @@ use std::time::Duration;
 use support::*;
 
 const SLOW_STARTER: &str = "[dock]\npinned = [\"red\", \"slow\"]\n";
+const HOPPING: &str = "[animation]\nlaunch = \"bounce\"\n";
 
 fn hopping(desktop: &Desktop) -> bool {
     let slow = dock_of(2).1[1];
@@ -20,8 +21,8 @@ fn start_the_slow_app(desktop: &mut Desktop) {
 }
 
 #[test]
-fn the_icon_of_a_starting_app_hops_until_its_window_appears() {
-    let mut desktop = Desktop::with_dock(SLOW_STARTER);
+fn set_to_bounce_the_icon_of_a_starting_app_hops_until_its_window_appears() {
+    let mut desktop = Desktop::with_dock(&format!("{SLOW_STARTER}{HOPPING}"));
 
     start_the_slow_app(&mut desktop);
 
@@ -79,4 +80,27 @@ fn start_nothing_hops(desktop: &mut Desktop) {
     never("no hop with animations off", Duration::from_millis(600), || {
         desktop.screenshot().shows(GREEN, green.center_x(), green.y - 6.0)
     });
+}
+
+fn at_rest(desktop: &Desktop) -> bool {
+    let slow = dock_of(2).1[1];
+    desktop.screenshot().shows(MAGENTA, slow.x + 2.0, slow.y + 2.0)
+}
+
+#[test]
+fn the_icon_of_a_starting_app_spins_as_a_cube_until_its_window_appears() {
+    let mut desktop = Desktop::with_dock(SLOW_STARTER);
+    assert!(at_rest(&desktop));
+
+    start_the_slow_app(&mut desktop);
+
+    eventually("the icon has turned into a smaller, spinning cube", || {
+        !at_rest(&desktop)
+    });
+    assert!(!hopping(&desktop), "a cube spins in place");
+    eventually("the app has opened its window", || {
+        desktop.focused().as_deref() == Some("slow-window")
+    });
+    eventually("the plain icon is back", || at_rest(&desktop));
+    never("and stays", Duration::from_millis(800), || !at_rest(&desktop));
 }

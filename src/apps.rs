@@ -57,6 +57,24 @@ impl Catalog {
         pinned
     }
 
+    pub fn launchable(&self) -> Vec<(AppId, String)> {
+        let mut apps: Vec<(AppId, String)> = self
+            .entries
+            .iter()
+            .filter(|entry| !entry.no_display() && !entry.hidden() && entry.exec().is_some())
+            .filter(|entry| entry.type_().is_none_or(|kind| kind == "Application"))
+            .map(|entry| {
+                let name = entry
+                    .name(&self.locales)
+                    .map_or_else(|| entry.id().to_owned(), |name| name.into_owned());
+                (AppId::new(entry.id()), name)
+            })
+            .collect();
+        apps.sort_by_key(|(app, name)| (name.to_lowercase(), app.clone()));
+        apps.dedup_by(|later, earlier| later.0 == earlier.0);
+        apps
+    }
+
     pub fn command(&self, app: &AppId) -> Option<Vec<String>> {
         self.entry(app.as_str())?
             .parse_exec()
@@ -213,6 +231,21 @@ mod tests {
         let wanted = ["uninstalled-app", "browser"].map(String::from);
 
         assert_eq!(catalog.pinned(&wanted), [AppId::new("browser")]);
+    }
+
+    #[test]
+    fn the_apps_one_can_start_are_listed_by_name_without_the_hidden_ones() {
+        let (_dir, catalog) = catalog_of(&[
+            ("zed.desktop", "Name=Zed\nExec=zed"),
+            ("browser.desktop", "Name=browser\nExec=browser"),
+            ("helper.desktop", "Name=Helper\nExec=helper\nNoDisplay=true"),
+            ("removed.desktop", "Name=Removed\nExec=removed\nHidden=true"),
+            ("broken.desktop", "Name=Broken"),
+        ]);
+
+        let listed: Vec<String> = catalog.launchable().into_iter().map(|(_, name)| name).collect();
+
+        assert_eq!(listed, ["browser", "Zed"]);
     }
 
     #[test]

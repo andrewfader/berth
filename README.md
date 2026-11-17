@@ -9,6 +9,8 @@ Wayland client: no compositor patch, no fork of COSMIC.
   swell under the pointer. It hides only when a window actually needs its space
   and returns when the pointer touches the bottom edge. What each click and
   scroll does is yours to decide, and a right-click opens a menu.
+- **Overview**: tap the Super key to spread every window out, type to narrow
+  them down or to find an app, then click or press Enter.
 - **Switcher**: hold Alt and tap Tab for a row of live window thumbnails over a
   dimmed, blurred desktop. Release Alt to switch.
 
@@ -70,6 +72,16 @@ sed -e "s|cosmic-launcher alt-tab|$(command -v berth) switch next|" \
 
 Delete that file to get COSMIC's switcher back.
 
+To open the overview with a tap on the Super key, add this line inside the
+braces of `custom` in the same folder (create the file with `{` and `}` around
+the line if it does not exist). Super held with another key stays a shortcut.
+
+```
+    (modifiers: [Super]): Spawn("/home/YOU/.cargo/bin/berth overview"),
+```
+
+COSMIC's launcher stays on Super+/.
+
 ## Configure
 
 `~/.config/berth/config.toml`. Every key is optional; these are the defaults.
@@ -100,7 +112,11 @@ scroll-down = "cycle"
 [animation]
 enabled = true            # false: everything moves in a single step
 speed = 1.0               # 0.25 (slow) to 4.0 (fast)
-launch = "bounce"         # "bounce" or "none": the hop of a starting app's icon
+launch = "cube"           # what a starting app's icon does: "cube" spins, "bounce" hops, "none"
+
+[overview]
+opacity = 0.6             # how dark the desktop gets behind the windows
+blur = true
 
 [switcher]
 opacity = 0.45            # how dark the desktop gets behind the row
@@ -148,6 +164,10 @@ back. To avoid even that, give `shift-click` and `ctrl-click` the same action as
 
 `berth windows` lists the windows berth tracks with the app id it matched them
 to, most recently used first. Those ids are what `pinned` takes.
+
+In the overview, the arrow keys and Tab move, Enter goes to the selected window
+or starts the selected app, Backspace erases, and Escape, a second tap on Super
+or a click on the backdrop closes it.
 
 In the switcher, Tab and the arrow keys move, Shift+Tab moves back, Enter or
 releasing the modifier switches, Escape or a click on the backdrop cancels, and

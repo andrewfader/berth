@@ -302,6 +302,14 @@ impl Desktop {
         )
         .unwrap();
         fs::write(
+            root.join("cfg/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"),
+            format!(
+                "{{\n    (modifiers: [Super]): Spawn(\"{} overview\"),\n}}\n",
+                berth()
+            ),
+        )
+        .unwrap();
+        fs::write(
             root.join("cfg/cosmic/com.system76.CosmicAppList/v1/favorites"),
             "[\"red\", \"green\", \"blue\"]",
         )
@@ -517,6 +525,12 @@ impl Desktop {
 
     pub fn release(&mut self, key: Key) {
         self.host.key(key, false);
+    }
+
+    pub fn type_text(&mut self, text: &str) {
+        for letter in text.chars() {
+            self.host.letter(letter);
+        }
     }
 
     pub fn tap(&mut self, key: Key) {

@@ -23,6 +23,7 @@ pub enum Request {
     Switch(Direction),
     Windows,
     Reload,
+    Overview,
 }
 
 impl fmt::Display for Request {
@@ -32,6 +33,7 @@ impl fmt::Display for Request {
             Request::Switch(Direction::Previous) => "switch previous",
             Request::Windows => "windows",
             Request::Reload => "reload",
+            Request::Overview => "overview",
         })
     }
 }
@@ -45,6 +47,7 @@ impl FromStr for Request {
             "switch previous" => Ok(Request::Switch(Direction::Previous)),
             "windows" => Ok(Request::Windows),
             "reload" => Ok(Request::Reload),
+            "overview" => Ok(Request::Overview),
             other => Err(format!("unknown request: {other}")),
         }
     }
@@ -137,6 +140,7 @@ mod tests {
             Request::Switch(Direction::Previous),
             Request::Windows,
             Request::Reload,
+            Request::Overview,
         ] {
             assert_eq!(request.to_string().parse(), Ok(request));
         }

@@ -148,6 +148,19 @@ impl Host {
         devices.settle();
     }
 
+    pub fn letter(&mut self, letter: char) {
+        const ROWS: [(&str, u32); 3] = [("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)];
+        let code = ROWS
+            .iter()
+            .find_map(|(row, first)| Some(first + row.find(letter)? as u32))
+            .expect("a lowercase letter");
+        let devices = self.devices();
+        for down in [1, 0] {
+            devices.keyboard.key(devices.now(), code, down);
+            devices.settle();
+        }
+    }
+
     pub fn key(&mut self, key: Key, down: bool) {
         let devices = self.devices();
         devices.keyboard.key(devices.now(), key as u32, down as u32);

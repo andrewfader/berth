@@ -24,6 +24,7 @@ use wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_tople
 use super::Berth;
 use super::canvas::{Canvas, Medium};
 use crate::animation::Animated;
+use crate::config::Launching;
 use crate::dock::actions::{Action, Gesture, effects};
 use crate::dock::bounce;
 use crate::dock::items::{DockItem, Shown, dock_items};
@@ -453,7 +454,8 @@ impl Berth {
                 .map(Rc::new);
         }
 
-        let hops = self.config.animation.bounces_on_launch();
+        let style = self.config.animation.of_a_launch();
+        let hops = style != Launching::None;
         let tiles: Vec<Tile> = dock
             .items
             .iter()
@@ -464,9 +466,14 @@ impl Berth {
                     icon: face.icon.as_deref()?,
                     running: item.is_running(),
                     focused: item.active_window(&self.windows).is_some(),
-                    lift: hopping_since.map_or(0.0, |started| {
-                        bounce::lift(now.saturating_sub(*started), dock.metrics.icon)
-                    }),
+                    lift: hopping_since
+                        .filter(|_| style == Launching::Bounce)
+                        .map_or(0.0, |started| {
+                            bounce::lift(now.saturating_sub(*started), dock.metrics.icon)
+                        }),
+                    spinning: hopping_since
+                        .filter(|_| style == Launching::Cube)
+                        .map(|started| now.saturating_sub(*started)),
                 })
             })
             .collect();

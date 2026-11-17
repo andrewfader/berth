@@ -6,6 +6,7 @@ pub mod dock;
 pub mod geometry;
 pub mod icons;
 pub mod ipc;
+pub mod overview;
 pub mod paint;
 pub mod pins;
 pub mod shell;

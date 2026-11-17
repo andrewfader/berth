@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use tiny_skia::{Pixmap, PixmapMut};
 
+use super::cube;
 use super::layout::{Edge, Layout};
 use crate::geometry::Rect;
 use crate::paint::{Finish, fill_rounded, picture, stroke_rounded, tint};
@@ -11,6 +14,7 @@ pub struct Tile<'a> {
     pub running: bool,
     pub focused: bool,
     pub lift: f32,
+    pub spinning: Option<Duration>,
 }
 
 pub struct Scene<'a> {
@@ -44,14 +48,22 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
     let panel = layout.panel;
     for (tile, place) in scene.tiles.iter().zip(&layout.icons) {
         let (hop_x, hop_y) = scene.edge.inward(tile.lift);
-        picture(
-            canvas,
-            tile.icon,
-            place.moved(hop_x, hop_y),
-            0.0,
-            Finish::Fine,
-            scale,
-        );
+        match tile.spinning {
+            Some(since_launch) => {
+                for face in cube::faces(since_launch, *place) {
+                    picture(canvas, tile.icon, face.place, 0.0, Finish::Fine, scale);
+                    fill_rounded(canvas, face.place, 0.0, &tint(0, 0, 0, face.shade), scale);
+                }
+            }
+            None => picture(
+                canvas,
+                tile.icon,
+                place.moved(hop_x, hop_y),
+                0.0,
+                Finish::Fine,
+                scale,
+            ),
+        }
         if tile.running {
             let long = if tile.focused { 14.0 } else { 4.0 };
             let mark = match scene.edge {
@@ -133,6 +145,7 @@ mod tests {
                 running: *running,
                 focused: *focused,
                 lift: 0.0,
+                spinning: None,
             })
             .collect();
         let mut pixmap = Pixmap::new((width * scale) as u32, (height * scale) as u32).unwrap();
@@ -266,6 +279,7 @@ mod tests {
             running: false,
             focused: false,
             lift: 12.0,
+            spinning: None,
         }];
         let mut pixmap = Pixmap::new(width as u32, height as u32).unwrap();
 
@@ -300,6 +314,7 @@ mod tests {
             running,
             focused: false,
             lift,
+            spinning: None,
         });
         let mut pixmap = Pixmap::new(width as u32, height as u32).unwrap();
         paint(
@@ -366,6 +381,42 @@ mod tests {
             rgba(&top.pixmap, icon.center_x(), icon.bottom() + 10.0),
             [255, 0, 0, 255]
         );
+    }
+
+    #[test]
+    fn a_spinning_icon_shows_two_faces_of_a_cube_one_of_them_in_shadow() {
+        let (width, height) = metrics().surface(1);
+        let layout = Layout::arrange(&metrics(), 1, Pose::RESTING);
+        let icon = solid(96, 255, 0, 0);
+        let tiles = [Tile {
+            icon: &icon,
+            running: false,
+            focused: false,
+            lift: 0.0,
+            spinning: Some(cube::QUARTER_TURN / 4),
+        }];
+        let mut pixmap = Pixmap::new(width as u32, height as u32).unwrap();
+
+        paint(
+            &mut pixmap.as_mut(),
+            &Scene {
+                layout: &layout,
+                tiles: &tiles,
+                label: None,
+                edge: Edge::Bottom,
+                opacity: 0.5,
+                scale: 1.0,
+            },
+        );
+
+        let slot = layout.icons[0];
+        let faces = cube::faces(cube::QUARTER_TURN / 4, slot);
+        let (bright, dark) = (
+            rgba(&pixmap, faces[0].place.center_x(), slot.center_y())[0],
+            rgba(&pixmap, faces[1].place.center_x(), slot.center_y())[0],
+        );
+        assert!(bright > 200 && dark < bright - 60, "{bright} {dark}");
+        assert_ne!(rgba(&pixmap, slot.x + 1.0, slot.y + 1.0), [255, 0, 0, 255]);
     }
 
     #[test]

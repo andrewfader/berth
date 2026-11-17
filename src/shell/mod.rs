@@ -2,6 +2,7 @@ mod canvas;
 mod capture;
 mod dock;
 mod menu;
+mod overview;
 mod switcher;
 
 use std::collections::HashMap;
@@ -75,6 +76,7 @@ use crate::windows::{self, AppId, Window, WindowId, Windows};
 use capture::Thumbnails;
 use dock::DockView;
 use menu::MenuView;
+use overview::OverviewView;
 use switcher::SwitcherView;
 
 pub struct Extras {
@@ -119,6 +121,7 @@ pub struct Berth {
     menu: Option<MenuView>,
     launching: HashMap<AppId, Duration>,
     switcher: Option<SwitcherView>,
+    overview: Option<OverviewView>,
     thumbnails: Thumbnails,
     leaving: bool,
 }
@@ -212,6 +215,7 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         menu: None,
         launching: HashMap::new(),
         switcher: None,
+        overview: None,
         thumbnails: Thumbnails::default(),
         leaving: false,
     };
@@ -266,6 +270,7 @@ impl Berth {
         self.paint_menu();
         self.settle_switcher();
         self.paint_switcher();
+        self.paint_overview();
     }
 
     fn answer(&mut self, request: Request) -> String {
@@ -275,6 +280,10 @@ impl Berth {
                 "ok\n".to_owned()
             }
             Request::Windows => windows::listing(&self.windows),
+            Request::Overview => {
+                self.toggle_overview();
+                "ok\n".to_owned()
+            }
             Request::Reload => match self.reload() {
                 Ok(()) => "ok\n".to_owned(),
                 Err(problem) => format!("error: {problem}\n"),
@@ -289,6 +298,7 @@ impl Berth {
         self.pins = pinned_apps(&self.config, &self.catalog);
         self.icons = themed_icons();
         self.switcher = None;
+        self.overview = None;
         self.close_docks(|_| true);
         for output in self.outputs.outputs().collect::<Vec<_>>() {
             self.open_dock(output);
@@ -412,6 +422,9 @@ impl Berth {
         if let Some(view) = &mut self.switcher {
             view.rescale(surface, scale120, fractional);
         }
+        if let Some(view) = &mut self.overview {
+            view.rescale(surface, scale120, fractional);
+        }
     }
 }
 
@@ -447,6 +460,9 @@ impl ToplevelInfoHandler for Berth {
         self.forget_overlap(toplevel);
         if let Some(view) = self.switcher.take() {
             self.switcher = view.without(id);
+        }
+        if let Some(view) = &mut self.overview {
+            view.forget(id);
         }
         self.windows_changed();
     }
@@ -506,6 +522,9 @@ impl CompositorHandler for Berth {
         if let Some(view) = &mut self.switcher {
             view.frame(surface);
         }
+        if let Some(view) = &mut self.overview {
+            view.frame(surface);
+        }
     }
 
     fn surface_enter(
@@ -531,6 +550,8 @@ impl LayerShellHandler for Berth {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
         if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
             self.switcher = None;
+        } else if self.overview.as_ref().is_some_and(|view| view.owns(layer)) {
+            self.overview = None;
         } else {
             log::warn!("the compositor closed a dock");
             self.close_docks(|dock| dock.owns(layer));
@@ -547,6 +568,8 @@ impl LayerShellHandler for Berth {
     ) {
         if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
             self.switcher_configured(configure.new_size);
+        } else if self.overview.as_ref().is_some_and(|view| view.owns(layer)) {
+            self.overview_configured(configure.new_size);
         } else {
             self.dock_configured(layer, configure.new_size);
         }
@@ -616,6 +639,12 @@ impl PointerHandler for Berth {
                 self.dock_pointer(at, event);
             } else if self.menu.as_ref().is_some_and(|menu| menu.is_on(&event.surface)) {
                 self.menu_pointer(event);
+            } else if self
+                .overview
+                .as_ref()
+                .is_some_and(|view| view.is_on(&event.surface))
+            {
+                self.overview_pointer(event);
             } else {
                 self.switcher_pointer(event);
             }
@@ -644,16 +673,22 @@ impl KeyboardHandler for Berth {
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: &WlSurface, _: u32) {}
 
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, event: KeyEvent) {
-        match self.menu {
-            Some(_) => self.menu_key(event.keysym),
-            None => self.switcher_key(event.keysym),
+        if self.menu.is_some() {
+            self.menu_key(event.keysym);
+        } else if self.overview.is_some() {
+            self.overview_key(&event);
+        } else {
+            self.switcher_key(event.keysym);
         }
     }
 
     fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, event: KeyEvent) {
-        match self.menu {
-            Some(_) => self.menu_key(event.keysym),
-            None => self.switcher_key(event.keysym),
+        if self.menu.is_some() {
+            self.menu_key(event.keysym);
+        } else if self.overview.is_some() {
+            self.overview_key(&event);
+        } else {
+            self.switcher_key(event.keysym);
         }
     }
 

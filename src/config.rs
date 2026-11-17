@@ -19,6 +19,7 @@ use crate::switcher::session::Listed;
 pub struct Config {
     pub dock: Dock,
     pub switcher: Switcher,
+    pub overview: Backdrop,
     pub animation: Animation,
 }
 
@@ -122,10 +123,27 @@ impl Default for Switcher {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Backdrop {
+    pub opacity: f32,
+    pub blur: bool,
+}
+
+impl Default for Backdrop {
+    fn default() -> Self {
+        Self {
+            opacity: 0.6,
+            blur: true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Launching {
     #[default]
+    Cube,
     Bounce,
     None,
 }
@@ -143,7 +161,7 @@ impl Default for Animation {
         Self {
             enabled: true,
             speed: 1.0,
-            launch: Launching::Bounce,
+            launch: Launching::Cube,
         }
     }
 }
@@ -157,8 +175,12 @@ impl Animation {
         }
     }
 
-    pub fn bounces_on_launch(&self) -> bool {
-        self.enabled && self.launch == Launching::Bounce
+    pub fn of_a_launch(&self) -> Launching {
+        if self.enabled {
+            self.launch
+        } else {
+            Launching::None
+        }
     }
 }
 
@@ -223,6 +245,11 @@ impl Config {
         within(
             (0.0..=1.0).contains(&self.switcher.opacity),
             "switcher.opacity",
+            "between 0.0 and 1.0",
+        )?;
+        within(
+            (0.0..=1.0).contains(&self.overview.opacity),
+            "overview.opacity",
             "between 0.0 and 1.0",
         )?;
         within(
@@ -347,7 +374,7 @@ mod tests {
         let usual = Duration::from_millis(200);
 
         assert_eq!(Config::default().animation.lasting(usual), usual);
-        assert!(Config::default().animation.bounces_on_launch());
+        assert_eq!(Config::default().animation.of_a_launch(), Launching::Cube);
     }
 
     #[test]
@@ -367,8 +394,18 @@ mod tests {
             pace("[animation]\nenabled = false").lasting(usual),
             Duration::ZERO
         );
-        assert!(!pace("[animation]\nenabled = false").bounces_on_launch());
-        assert!(!pace("[animation]\nlaunch = \"none\"").bounces_on_launch());
+        assert_eq!(
+            pace("[animation]\nenabled = false").of_a_launch(),
+            Launching::None
+        );
+        assert_eq!(
+            pace("[animation]\nlaunch = \"none\"").of_a_launch(),
+            Launching::None
+        );
+        assert_eq!(
+            pace("[animation]\nlaunch = \"bounce\"").of_a_launch(),
+            Launching::Bounce
+        );
     }
 
     #[test]
@@ -388,6 +425,23 @@ mod tests {
 
         assert_eq!(config.switcher.windows, Listed::ThisWorkspace);
         assert_eq!(Config::default().switcher.windows, Listed::All);
+    }
+
+    #[test]
+    fn the_overview_backdrop_is_configurable() {
+        let config = Config::parse("[overview]\nopacity = 0.9\nblur = false").unwrap();
+
+        assert_eq!(
+            config.overview,
+            Backdrop {
+                opacity: 0.9,
+                blur: false
+            }
+        );
+        assert_eq!(
+            rejection("[overview]\nopacity = 2"),
+            "overview.opacity must be between 0.0 and 1.0"
+        );
     }
 
     #[test]

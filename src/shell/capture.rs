@@ -181,6 +181,9 @@ impl ScreencopyHandler for Berth {
             if let Some(view) = &mut self.switcher {
                 view.invalidate();
             }
+            if let Some(view) = &mut self.overview {
+                view.invalidate();
+            }
         }
     }
 

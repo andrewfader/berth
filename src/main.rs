@@ -20,6 +20,8 @@ enum Command {
     Windows,
     /// Read the configuration again without restarting
     Reload,
+    /// Show every window and a search for apps, or put them away again
+    Overview,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -42,6 +44,7 @@ fn main() -> ExitCode {
         }) => ask(Request::Switch(Direction::Previous)),
         Some(Command::Windows) => ask(Request::Windows),
         Some(Command::Reload) => ask(Request::Reload),
+        Some(Command::Overview) => ask(Request::Overview),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
