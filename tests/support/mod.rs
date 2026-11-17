@@ -13,6 +13,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use berth::dock::layout::{Layout, Metrics, Pose};
+use berth::dock::menu;
 use berth::geometry::Rect;
 use berth::switcher::carousel;
 pub use input::{Button, Key};
@@ -21,6 +22,7 @@ pub const SCREEN: (u32, u32) = (1920, 1080);
 pub const RED: [u8; 3] = [255, 0, 0];
 pub const GREEN: [u8; 3] = [0, 255, 0];
 pub const BLUE: [u8; 3] = [0, 0, 255];
+pub const MAGENTA: [u8; 3] = [255, 0, 255];
 pub const PINNED: &str = "pinned = [\"red\", \"green\", \"blue\"]\n";
 
 const PATIENCE: Duration = Duration::from_secs(8);
@@ -36,6 +38,7 @@ pub struct Desktop {
     opened: Vec<(String, u32)>,
     dock: Option<Child>,
     host: input::Host,
+    display: &'static str,
     _turn: MutexGuard<'static, ()>,
 }
 
@@ -66,6 +69,15 @@ impl Screenshot {
             .iter()
             .zip(colour)
             .all(|(seen, wanted)| seen.abs_diff(wanted) <= 12)
+    }
+
+    pub fn brightest_in(&self, area: Rect) -> u32 {
+        let (left, top) = (area.x.max(0.0) as u32, area.y.max(0.0) as u32);
+        (top..area.bottom() as u32)
+            .flat_map(|y| (left..area.right() as u32).map(move |x| (x, y)))
+            .map(|(x, y)| self.brightness(x as f32, y as f32))
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn brightness(&self, x: f32, y: f32) -> u32 {
@@ -129,6 +141,20 @@ pub fn center_stage() -> Rect {
     carousel::front_frame((stage.width, stage.height)).moved(stage.x, stage.y)
 }
 
+pub fn menu_row(above: Rect, rows: usize, row: usize) -> (f32, f32) {
+    let (_, tall) = menu::size(rows, 0.0);
+    let top = above.y - 8.0 - tall;
+    (
+        above.center_x(),
+        top + menu::MARGIN + menu::ROW * (row as f32 + 0.5),
+    )
+}
+
+pub fn menu_area(above: Rect, rows: usize) -> Rect {
+    let (wide, tall) = menu::size(rows, 0.0);
+    Rect::new(above.center_x() - wide / 2.0, above.y - 8.0 - tall, wide, tall)
+}
+
 pub fn panel() -> Rect {
     dock_of(3).0
 }
@@ -155,6 +181,84 @@ pub fn never(what: &str, within: Duration, mut happens: impl FnMut() -> bool) {
 
 impl Desktop {
     pub fn boot() -> Self {
+        let mut desktop = Self::hosted();
+        let compositor = desktop
+            .command("dbus-run-session")
+            .args(["--", "cosmic-comp", "--no-xwayland"])
+            .env("WAYLAND_DISPLAY", HOST_DISPLAY)
+            .env("COSMIC_BACKEND", "winit")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .spawn()
+            .expect("cosmic-comp and dbus-run-session are needed for the test desktop");
+        desktop.session.push(compositor);
+        desktop.await_socket(DISPLAY);
+        desktop.display = DISPLAY;
+        desktop.await_first_frame();
+        desktop
+    }
+
+    pub fn on_sway_with_monitors(sizes: &[(u32, u32)], config: &str) -> Self {
+        let mut desktop = Self::hosted();
+        for (index, (wide, tall)) in sizes.iter().enumerate() {
+            let name = format!("HEADLESS-{}", index + 1);
+            if index > 0 {
+                desktop.sway(&["create_output"]);
+            }
+            desktop.sway(&[
+                "output",
+                &name,
+                "resolution",
+                &format!("{wide}x{tall}"),
+                "scale",
+                "1",
+            ]);
+        }
+        desktop.await_first_frame();
+        desktop.start_dock(config);
+        desktop
+    }
+
+    pub fn sway(&self, command: &[&str]) {
+        let socket = fs::read_dir(self.root.join("rt"))
+            .unwrap()
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("sway-ipc"))
+            })
+            .expect("sway's control socket");
+        let obeyed = self
+            .command("swaymsg")
+            .arg("-s")
+            .arg(socket)
+            .args(command)
+            .status()
+            .unwrap();
+        assert!(obeyed.success(), "sway refused {command:?}");
+    }
+
+    pub fn monitor(&self, name: &str) -> Screenshot {
+        let mut seen = Err(String::new());
+        let deadline = Instant::now() + PATIENCE;
+        while seen.is_err() && Instant::now() < deadline {
+            seen = self.capture(&["-o", name]);
+        }
+        seen.unwrap_or_else(|problem| panic!("{problem}"))
+    }
+
+    fn await_first_frame(&self) {
+        let mut seen = Err(String::new());
+        let deadline = Instant::now() + PATIENCE;
+        while seen.is_err() && Instant::now() < deadline {
+            sleep(Duration::from_millis(50));
+            seen = self.try_screenshot();
+        }
+        if let Err(problem) = seen {
+            panic!("the test desktop never rendered: {problem}");
+        }
+    }
+
+    fn hosted() -> Self {
         let turn = ONE_DESKTOP_AT_A_TIME
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -168,6 +272,7 @@ impl Desktop {
             "rt",
             "cfg/berth",
             "cfg/cosmic/com.system76.CosmicSettings.Shortcuts/v1",
+            "cfg/cosmic/com.system76.CosmicAppList/v1",
             "data/applications",
             "state",
             "cache",
@@ -196,7 +301,28 @@ impl Desktop {
             ),
         )
         .unwrap();
-        for (name, colour) in [("red", "ff0000"), ("green", "00ff00"), ("blue", "0000ff")] {
+        fs::write(
+            root.join("cfg/cosmic/com.system76.CosmicAppList/v1/favorites"),
+            "[\"red\", \"green\", \"blue\"]",
+        )
+        .unwrap();
+        let mut apps = vec![
+            ("red".to_owned(), "ff0000"),
+            ("green".to_owned(), "00ff00"),
+            ("blue".to_owned(), "0000ff"),
+        ];
+        apps.extend((1..=9).map(|number| (format!("extra{number}"), "808080")));
+        apps.push(("last".to_owned(), "ff00ff"));
+        fs::write(
+            root.join("data/applications/slow.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=slow app\nIcon={}\nExec=sh -c \"sleep 2; exec {} slow slow-window ffff00 500x300\"\n",
+                root.join("data/last.svg").display(),
+                window_program().display()
+            ),
+        )
+        .unwrap();
+        for (name, colour) in apps.iter().map(|(name, colour)| (name.as_str(), *colour)) {
             let icon = root.join(format!("data/{name}.svg"));
             fs::write(
                 &icon,
@@ -219,6 +345,7 @@ impl Desktop {
             opened: Vec::new(),
             dock: None,
             host: input::Host::unconnected(),
+            display: HOST_DISPLAY,
             root,
             _turn: turn,
         };
@@ -233,27 +360,7 @@ impl Desktop {
         desktop.session.push(sway);
         desktop.await_socket(HOST_DISPLAY);
 
-        let compositor = desktop
-            .command("dbus-run-session")
-            .args(["--", "cosmic-comp", "--no-xwayland"])
-            .env("WAYLAND_DISPLAY", HOST_DISPLAY)
-            .env("COSMIC_BACKEND", "winit")
-            .env_remove("DBUS_SESSION_BUS_ADDRESS")
-            .spawn()
-            .expect("cosmic-comp and dbus-run-session are needed for the test desktop");
-        desktop.session.push(compositor);
-        desktop.await_socket(DISPLAY);
-
         desktop.host = input::Host::connect(&desktop.root.join("rt").join(HOST_DISPLAY), SCREEN);
-        let mut seen = Err(String::new());
-        let deadline = Instant::now() + PATIENCE;
-        while seen.is_err() && Instant::now() < deadline {
-            sleep(Duration::from_millis(50));
-            seen = desktop.try_screenshot();
-        }
-        if let Err(problem) = seen {
-            panic!("the test desktop never rendered: {problem}");
-        }
         desktop
     }
 
@@ -263,10 +370,18 @@ impl Desktop {
         desktop
     }
 
-    pub fn start_dock(&mut self, config: &str) {
+    pub fn configure(&self, config: &str) {
         fs::write(self.root.join("cfg/berth/config.toml"), config).unwrap();
+    }
+
+    pub fn start_dock(&mut self, config: &str) {
+        self.configure(config);
+        let without_a_dock = self.screenshot().pixels;
         self.dock = Some(self.app(berth()).spawn().unwrap());
         eventually("the dock answers", || self.run(&["windows"]).status.success());
+        eventually("the dock is on screen", || {
+            self.screenshot().pixels != without_a_dock
+        });
     }
 
     pub fn open(&mut self, app: &str, title: &str, colour: &str, placement: &str) {
@@ -287,7 +402,7 @@ impl Desktop {
     pub fn double_the_pixel_density(&mut self) {
         let rescaled = self
             .command("cosmic-randr")
-            .env("WAYLAND_DISPLAY", DISPLAY)
+            .env("WAYLAND_DISPLAY", self.display)
             .args([
                 "mode",
                 "WINIT-0",
@@ -312,7 +427,7 @@ impl Desktop {
     }
 
     pub fn socket(&self) -> PathBuf {
-        self.root.join("rt").join(format!("berth-{DISPLAY}.sock"))
+        self.root.join("rt").join(format!("berth-{}.sock", self.display))
     }
 
     pub fn ask_launched_app_to_quit(&self, app: &str) {
@@ -410,9 +525,14 @@ impl Desktop {
     }
 
     fn try_screenshot(&self) -> Result<Screenshot, String> {
+        self.capture(&[])
+    }
+
+    fn capture(&self, of: &[&str]) -> Result<Screenshot, String> {
         let output = self
             .command("grim")
-            .env("WAYLAND_DISPLAY", DISPLAY)
+            .env("WAYLAND_DISPLAY", self.display)
+            .args(of)
             .args(["-t", "ppm", "-"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -440,7 +560,7 @@ impl Desktop {
     fn app(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
         let mut command = self.command(program);
         command
-            .env("WAYLAND_DISPLAY", DISPLAY)
+            .env("WAYLAND_DISPLAY", self.display)
             .env("XDG_DATA_HOME", self.root.join("data"))
             .env("XDG_DATA_DIRS", self.root.join("data"));
         command

@@ -5,38 +5,38 @@ use std::time::Duration;
 use cosmic_client_toolkit::cosmic_protocols::overlap_notify::v1::client::zcosmic_overlap_notification_v1::{
     self, ZcosmicOverlapNotificationV1,
 };
-use cosmic_client_toolkit::sctk::compositor::{CompositorState, Region};
+use cosmic_client_toolkit::sctk::compositor::Region;
 use cosmic_client_toolkit::sctk::seat::pointer::{
     BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, PointerEvent, PointerEventKind,
 };
 use cosmic_client_toolkit::sctk::shell::WaylandSurface;
 use cosmic_client_toolkit::sctk::shell::wlr_layer::{
-    Anchor, KeyboardInteractivity, Layer, LayerShell, LayerSurface, SurfaceKind,
+    Anchor, KeyboardInteractivity, Layer, LayerSurface, SurfaceKind,
 };
 use tiny_skia::Pixmap;
 use wayland_client::backend::ObjectId;
+use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 use wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
 
+use super::Berth;
 use super::canvas::{Canvas, Medium};
-use super::{Berth, Extras};
 use crate::animation::Animated;
-use crate::apps::Catalog;
-use crate::config::{Config, config_home};
-use crate::cosmic;
-use crate::dock::actions::{Gesture, effects};
+use crate::dock::actions::{Action, Gesture, effects};
+use crate::dock::bounce;
 use crate::dock::items::{DockItem, dock_items};
 use crate::dock::layout::{Layout, Metrics, Pose};
 use crate::dock::paint::{CORNER, Scene, Tile, paint};
 use crate::dock::reveal::{Autohide, Reveal};
 use crate::geometry::Rect;
 use crate::paint::rounded_rows;
-use crate::windows::AppId;
+use crate::windows::Windows;
 
 const SWELL: Duration = Duration::from_millis(140);
 const SLIDE: Duration = Duration::from_millis(220);
+const KEYBOARD_PATIENCE: Duration = Duration::from_millis(150);
 const NOTCH: f64 = 15.0;
 const EDGE: i32 = 2;
 
@@ -47,13 +47,21 @@ struct Face {
     label: Option<Rc<Pixmap>>,
 }
 
+pub(super) struct Press {
+    index: usize,
+    button: u32,
+    item: DockItem,
+    windows: Windows,
+}
+
 pub struct DockView {
+    output: WlOutput,
     layer: LayerSurface,
     canvas: Canvas,
     blur: Option<ExtBackgroundEffectSurfaceV1>,
     overlap: Option<ZcosmicOverlapNotificationV1>,
+    room: f32,
     metrics: Metrics,
-    pinned: Vec<AppId>,
     items: Vec<DockItem>,
     faces: Vec<Face>,
     size: (u32, u32),
@@ -63,72 +71,72 @@ pub struct DockView {
     zoom: Animated,
     pointer: Option<f32>,
     hovering: bool,
-    pressed: Option<(usize, u32)>,
+    held_open: bool,
+    press: Option<Press>,
+    listening: bool,
+    keyed: bool,
+    awaiting: Option<(Press, Duration)>,
     scrolled: f64,
     overlapping: HashMap<ObjectId, Rect>,
 }
 
-impl DockView {
-    pub fn open(
-        config: &Config,
-        catalog: &Catalog,
-        compositor: &CompositorState,
-        layer_shell: &LayerShell,
-        extras: &Extras,
-        qh: &QueueHandle<Berth>,
-    ) -> Self {
-        let surface = compositor.create_surface(qh);
-        let layer =
-            layer_shell.create_layer_surface(qh, surface.clone(), Layer::Top, Some("berth-dock"), None);
-        let metrics = Metrics::for_icon(config.dock.icon_size as f32, config.dock.magnification);
-        layer.set_anchor(Anchor::BOTTOM);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.set_exclusive_zone(match config.dock.autohide {
-            Autohide::Never => metrics.travel() as i32,
-            Autohide::Always | Autohide::Intelligent => 0,
-        });
-
-        let blur = extras
-            .blur
-            .as_ref()
-            .filter(|_| config.dock.blur)
-            .map(|manager| manager.get_background_effect(&surface, qh, ()));
-        let wanted = config
-            .dock
-            .pinned
-            .clone()
-            .or_else(|| cosmic::setting(&config_home(), cosmic::FAVORITES))
-            .unwrap_or_default();
-        let pinned = catalog.pinned(&wanted);
-        let mut dock = Self {
-            canvas: Canvas::on(surface, extras, qh),
-            layer,
-            blur,
-            overlap: None,
-            metrics,
-            pinned,
-            items: Vec::new(),
-            faces: Vec::new(),
-            size: (0, 0),
-            configured: false,
-            reveal: Reveal::new(config.dock.autohide),
-            shown: Animated::resting_at(1.0),
-            zoom: Animated::resting_at(0.0),
-            pointer: None,
-            hovering: false,
-            pressed: None,
-            scrolled: 0.0,
-            overlapping: HashMap::new(),
-        };
-        dock.resize();
-        dock
+impl Drop for DockView {
+    fn drop(&mut self) {
+        if let Some(overlap) = &self.overlap {
+            overlap.destroy();
+        }
+        if let Some(blur) = &self.blur {
+            blur.destroy();
+        }
     }
+}
 
+impl DockView {
     pub fn is_on(&self, surface: &WlSurface) -> bool {
         self.canvas.surface() == surface
     }
 
-    fn resize(&mut self) {
+    pub fn is_for(&self, output: &WlOutput) -> bool {
+        self.output == *output
+    }
+
+    pub fn owns(&self, layer: &LayerSurface) -> bool {
+        self.layer.wl_surface() == layer.wl_surface()
+    }
+
+    pub fn layer(&self) -> &LayerSurface {
+        &self.layer
+    }
+
+    pub fn surface(&self) -> &WlSurface {
+        self.canvas.surface()
+    }
+
+    pub fn hold_open(&mut self) {
+        self.held_open = true;
+    }
+
+    pub fn is_hovered(&self) -> bool {
+        self.hovering
+    }
+
+    pub fn resting_icon(&self, index: usize) -> Option<Rect> {
+        Layout::arrange(&self.metrics, self.items.len(), Pose::RESTING)
+            .icons
+            .get(index)
+            .copied()
+    }
+
+    pub fn item(&self, index: usize) -> Option<&DockItem> {
+        self.items.get(index)
+    }
+
+    fn fit(&mut self, wanted_icon: f32, magnification: f32) {
+        let metrics = Metrics::fitted(wanted_icon, magnification, self.items.len(), self.room);
+        if metrics.icon != self.metrics.icon {
+            self.forget_pictures();
+        }
+        self.metrics = metrics;
         let (wide, tall) = self.metrics.surface(self.items.len());
         let size = (wide as u32, tall as u32);
         if size != self.size {
@@ -136,6 +144,13 @@ impl DockView {
             self.configured = false;
             self.layer.set_size(size.0, size.1);
             self.layer.commit();
+        }
+    }
+
+    fn forget_pictures(&mut self) {
+        for face in &mut self.faces {
+            face.icon = None;
+            face.label = None;
         }
     }
 
@@ -147,81 +162,210 @@ impl DockView {
         let panel = self.resting_panel();
         self.overlapping.values().any(|window| window.intersects(&panel))
     }
+
+    fn stop_listening(&mut self) {
+        if self.listening {
+            self.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            self.layer.commit();
+        }
+        self.listening = false;
+        self.keyed = false;
+    }
 }
 
 impl Berth {
-    pub(super) fn refresh_dock_items(&mut self) {
-        let items = dock_items(&self.dock.pinned, &self.windows);
-        let same_apps = items
-            .iter()
-            .map(|item| &item.app)
-            .eq(self.dock.items.iter().map(|item| &item.app));
-        if !same_apps {
-            self.dock.faces = items
-                .iter()
-                .map(|item| Face {
-                    name: self.catalog.name(&item.app),
-                    icon_name: self.catalog.icon(&item.app).map(str::to_owned),
-                    icon: None,
-                    label: None,
-                })
-                .collect();
+    pub(super) fn open_dock(&mut self, output: WlOutput) {
+        if self.docks.iter().any(|dock| dock.is_for(&output)) {
+            return;
         }
-        self.dock.items = items;
-        self.dock.resize();
-        let now = self.now();
-        let obstructed = self.dock.is_obstructed();
-        self.dock.reveal.obstruction_changed(obstructed, now);
-        self.dock.canvas.invalidate();
+        let config = &self.config.dock;
+        let surface = self.compositor.create_surface(&self.qh);
+        let layer = self.layer_shell.create_layer_surface(
+            &self.qh,
+            surface.clone(),
+            Layer::Top,
+            Some("berth-dock"),
+            Some(&output),
+        );
+        let metrics = Metrics::for_icon(config.icon_size as f32, config.magnification);
+        layer.set_anchor(Anchor::BOTTOM);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_exclusive_zone(match config.autohide {
+            Autohide::Never => metrics.travel() as i32,
+            Autohide::Always | Autohide::Intelligent => 0,
+        });
+        let blur = self
+            .extras
+            .blur
+            .as_ref()
+            .filter(|_| config.blur)
+            .map(|manager| manager.get_background_effect(&surface, &self.qh, ()));
+
+        self.docks.push(DockView {
+            room: self.room_on(&output),
+            output,
+            canvas: Canvas::on(surface, &self.extras, &self.qh),
+            layer,
+            blur,
+            overlap: None,
+            metrics,
+            items: Vec::new(),
+            faces: Vec::new(),
+            size: (0, 0),
+            configured: false,
+            reveal: Reveal::new(config.autohide),
+            shown: Animated::resting_at(1.0),
+            zoom: Animated::resting_at(0.0),
+            pointer: None,
+            hovering: false,
+            held_open: false,
+            press: None,
+            listening: false,
+            keyed: false,
+            awaiting: None,
+            scrolled: 0.0,
+            overlapping: HashMap::new(),
+        });
+        self.refresh_dock_items();
     }
 
-    pub(super) fn dock_configured(&mut self, size: (u32, u32)) {
-        if size.0 > 0 && size.1 > 0 {
-            self.dock.size = size;
-        }
-        self.dock.configured = true;
-        self.dock.canvas.invalidate();
-    }
-
-    pub(super) fn dock_frame(&mut self, surface: &WlSurface) {
-        if self.dock.is_on(surface) {
-            self.dock.canvas.frame_arrived();
-        }
-    }
-
-    pub(super) fn rescale_dock(&mut self, surface: &WlSurface, scale120: u32, fractional: bool) {
-        let dock = &mut self.dock;
-        if dock.is_on(surface)
-            && dock.canvas.follows_fractional_scale() == fractional
-            && dock.canvas.rescale(scale120)
+    pub(super) fn close_docks(&mut self, gone: impl Fn(&DockView) -> bool) {
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| self.docks.iter().any(|dock| gone(dock) && menu.belongs_to(dock)))
         {
-            for face in &mut dock.faces {
-                face.icon = None;
-                face.label = None;
-            }
+            self.menu = None;
         }
+        self.docks.retain(|dock| !gone(dock));
     }
 
-    pub(super) fn dock_deadline(&self) -> Option<Duration> {
-        self.dock
-            .reveal
-            .hides_at()
-            .filter(|_| self.dock.shown.target() > 0.0)
+    pub(super) fn output_changed(&mut self, output: &WlOutput) {
+        let room = self.room_on(output);
+        if let Some(dock) = self.docks.iter_mut().find(|dock| dock.is_for(output)) {
+            dock.room = room;
+        }
+        self.refresh_dock_items();
     }
 
-    pub(super) fn settle_dock(&mut self) {
+    fn room_on(&self, output: &WlOutput) -> f32 {
+        self.outputs
+            .info(output)
+            .and_then(|info| {
+                let scaled = info.modes.iter().find(|mode| mode.current).map(|mode| {
+                    (
+                        mode.dimensions.0 / info.scale_factor.max(1),
+                        mode.dimensions.1 / info.scale_factor.max(1),
+                    )
+                });
+                info.logical_size.or(scaled)
+            })
+            .map_or(f32::INFINITY, |(wide, _)| wide as f32)
+    }
+
+    pub(super) fn refresh_dock_items(&mut self) {
         let now = self.now();
-        let dock = &mut self.dock;
-        let wanted = if dock.reveal.is_shown(now) { 1.0 } else { 0.0 };
-        if dock.shown.target() != wanted {
-            dock.shown.head_for(wanted, SLIDE, now);
+        let items = dock_items(self.pins.apps(), &self.windows);
+        let (wanted_icon, magnification) =
+            (self.config.dock.icon_size as f32, self.config.dock.magnification);
+        for dock in &mut self.docks {
+            let same_apps = items
+                .iter()
+                .map(|item| &item.app)
+                .eq(dock.items.iter().map(|item| &item.app));
+            if !same_apps {
+                dock.faces = items
+                    .iter()
+                    .map(|item| Face {
+                        name: self.catalog.name(&item.app),
+                        icon_name: self.catalog.icon(&item.app).map(str::to_owned),
+                        icon: None,
+                        label: None,
+                    })
+                    .collect();
+            }
+            dock.items = items.clone();
+            dock.fit(wanted_icon, magnification);
+            let obstructed = dock.is_obstructed();
+            dock.reveal.obstruction_changed(obstructed, now);
             dock.canvas.invalidate();
         }
     }
 
-    pub(super) fn paint_dock(&mut self) {
+    pub(super) fn dock_at(&self, surface: &WlSurface) -> Option<usize> {
+        self.docks.iter().position(|dock| dock.is_on(surface))
+    }
+
+    pub(super) fn dock_configured(&mut self, layer: &LayerSurface, size: (u32, u32)) {
+        let Some(dock) = self.docks.iter_mut().find(|dock| dock.owns(layer)) else {
+            return;
+        };
+        if size.0 > 0 && size.1 > 0 {
+            dock.size = size;
+        }
+        dock.configured = true;
+        dock.canvas.invalidate();
+    }
+
+    pub(super) fn dock_frame(&mut self, surface: &WlSurface) {
+        if let Some(dock) = self.docks.iter_mut().find(|dock| dock.is_on(surface)) {
+            dock.canvas.frame_arrived();
+        }
+    }
+
+    pub(super) fn rescale_dock(&mut self, surface: &WlSurface, scale120: u32, fractional: bool) {
+        if let Some(dock) = self.docks.iter_mut().find(|dock| dock.is_on(surface))
+            && dock.canvas.follows_fractional_scale() == fractional
+            && dock.canvas.rescale(scale120)
+        {
+            dock.forget_pictures();
+        }
+    }
+
+    pub(super) fn dock_deadline(&self) -> Option<Duration> {
+        self.docks
+            .iter()
+            .flat_map(|dock| {
+                let hides = dock.reveal.hides_at().filter(|_| dock.shown.target() > 0.0);
+                let decides = dock.awaiting.as_ref().map(|(_, deadline)| *deadline);
+                [hides, decides]
+            })
+            .flatten()
+            .min()
+    }
+
+    pub(super) fn settle_docks(&mut self) {
         let now = self.now();
-        let dock = &mut self.dock;
+        self.launching
+            .retain(|_, started| now.saturating_sub(*started) < bounce::PATIENCE);
+        let slide = self.config.animation.lasting(SLIDE);
+        for at in 0..self.docks.len() {
+            let dock = &mut self.docks[at];
+            let wanted = if dock.reveal.is_shown(now) { 1.0 } else { 0.0 };
+            if dock.shown.target() != wanted {
+                dock.shown.head_for(wanted, slide, now);
+                dock.canvas.invalidate();
+            }
+            if dock
+                .awaiting
+                .as_ref()
+                .is_some_and(|(_, deadline)| now >= *deadline)
+                && let Some((press, _)) = dock.awaiting.take()
+            {
+                self.click(at, press);
+            }
+        }
+    }
+
+    pub(super) fn paint_docks(&mut self) {
+        for at in 0..self.docks.len() {
+            self.paint_dock(at);
+        }
+    }
+
+    fn paint_dock(&mut self, at: usize) {
+        let now = self.now();
+        let dock = &mut self.docks[at];
         if !dock.configured || !dock.canvas.wants_paint() {
             return;
         }
@@ -258,15 +402,20 @@ impl Berth {
                 .map(Rc::new);
         }
 
+        let hops = self.config.animation.bounces_on_launch();
         let tiles: Vec<Tile> = dock
             .items
             .iter()
             .zip(&dock.faces)
             .filter_map(|(item, face)| {
+                let hopping_since = self.launching.get(&item.app).filter(|_| hops);
                 Some(Tile {
                     icon: face.icon.as_deref()?,
                     running: item.is_running(),
                     focused: item.active_window(&self.windows).is_some(),
+                    lift: hopping_since.map_or(0.0, |started| {
+                        bounce::lift(now.saturating_sub(*started), dock.metrics.icon)
+                    }),
                 })
             })
             .collect();
@@ -303,7 +452,12 @@ impl Berth {
             blur.set_blur_region(Some(region.wl_region()));
         }
 
-        let animating = !dock.shown.is_settled(now) || !dock.zoom.is_settled(now);
+        let hopping = hops
+            && dock
+                .items
+                .iter()
+                .any(|item| self.launching.contains_key(&item.app));
+        let animating = hopping || !dock.shown.is_settled(now) || !dock.zoom.is_settled(now);
         let scene = Scene {
             layout: &layout,
             tiles: &tiles,
@@ -330,10 +484,12 @@ impl Berth {
         }
     }
 
-    pub(super) fn dock_pointer(&mut self, event: &PointerEvent) {
+    pub(super) fn dock_pointer(&mut self, at: usize, event: &PointerEvent) {
         let now = self.now();
+        let swell = self.config.animation.lasting(SWELL);
+        let watches_modifiers = self.config.dock.actions.distinguish_modifiers();
         let x = event.position.0 as f32;
-        let dock = &mut self.dock;
+        let dock = &mut self.docks[at];
         let pointed = Layout::item_at(&dock.metrics, dock.items.len(), x);
         dock.canvas.invalidate();
         match event.kind {
@@ -341,32 +497,49 @@ impl Berth {
                 dock.pointer = Some(x);
                 dock.hovering = true;
                 dock.reveal.pointer_entered(now);
-                dock.zoom.head_for(1.0, SWELL, now);
+                dock.zoom.head_for(1.0, swell, now);
             }
             PointerEventKind::Leave { .. } => {
                 dock.hovering = false;
-                dock.pressed = None;
+                dock.press = None;
                 dock.scrolled = 0.0;
-                dock.reveal.pointer_left(now);
-                dock.zoom.head_for(0.0, SWELL, now);
+                dock.zoom.head_for(0.0, swell, now);
+                if dock.awaiting.is_none() {
+                    dock.stop_listening();
+                }
+                if !dock.held_open {
+                    dock.reveal.pointer_left(now);
+                }
             }
-            PointerEventKind::Press { button, .. } => dock.pressed = pointed.map(|index| (index, button)),
+            PointerEventKind::Press { button, .. } => {
+                dock.press = pointed.and_then(|index| {
+                    Some(Press {
+                        index,
+                        button,
+                        item: dock.items.get(index)?.clone(),
+                        windows: self.windows.clone(),
+                    })
+                });
+                if button == BTN_LEFT && watches_modifiers && dock.press.is_some() {
+                    dock.listening = true;
+                    dock.keyed = false;
+                    dock.layer
+                        .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+                    dock.layer.commit();
+                }
+                self.close_menu();
+            }
             PointerEventKind::Release { button, .. } => {
                 let clicked = dock
-                    .pressed
+                    .press
                     .take()
-                    .filter(|pressed| Some(*pressed) == pointed.map(|index| (index, button)));
-                let gesture = clicked.and_then(|(index, button)| {
-                    let gesture = match button {
-                        BTN_LEFT => Gesture::Click,
-                        BTN_MIDDLE => Gesture::MiddleClick,
-                        BTN_RIGHT => Gesture::RightClick,
-                        _ => return None,
-                    };
-                    Some((index, gesture))
-                });
-                if let Some((index, gesture)) = gesture {
-                    self.gesture(index, gesture);
+                    .filter(|press| Some(press.index) == pointed && press.button == button);
+                match clicked {
+                    Some(press) if dock.listening && !dock.keyed => {
+                        dock.awaiting = Some((press, now + KEYBOARD_PATIENCE));
+                    }
+                    Some(press) => self.click(at, press),
+                    None => dock.stop_listening(),
                 }
             }
             PointerEventKind::Axis { vertical, .. } => {
@@ -377,33 +550,73 @@ impl Berth {
                 };
                 let notches = (dock.scrolled / NOTCH).trunc();
                 dock.scrolled -= notches * NOTCH;
-                if let Some(index) = pointed
+                let gesture = if notches > 0.0 {
+                    Gesture::ScrollDown
+                } else {
+                    Gesture::ScrollUp
+                };
+                if let Some(item) = pointed.and_then(|index| dock.items.get(index)).cloned()
                     && notches != 0.0
                 {
-                    self.gesture(
-                        index,
-                        if notches > 0.0 {
-                            Gesture::ScrollDown
-                        } else {
-                            Gesture::ScrollUp
-                        },
-                    );
+                    let action = self.config.dock.actions.action_for(gesture);
+                    for effect in effects(action, &item, &self.windows) {
+                        self.perform(effect);
+                    }
                 }
             }
         }
     }
 
-    pub(super) fn forget_overlap(&mut self, toplevel: &ExtForeignToplevelHandleV1) {
-        self.dock.overlapping.remove(&toplevel.id());
+    pub(super) fn dock_focused(&mut self, surface: &WlSurface) {
+        if let Some(dock) = self.docks.iter_mut().find(|dock| dock.is_on(surface)) {
+            dock.keyed = dock.listening;
+        }
     }
 
-    fn gesture(&mut self, index: usize, gesture: Gesture) {
-        let Some(item) = self.dock.items.get(index) else {
-            return;
+    pub(super) fn dock_modifiers(&mut self) {
+        for at in 0..self.docks.len() {
+            if self.docks[at].keyed
+                && let Some((press, _)) = self.docks[at].awaiting.take()
+            {
+                self.click(at, press);
+            }
+        }
+    }
+
+    pub(super) fn forget_overlap(&mut self, toplevel: &ExtForeignToplevelHandleV1) {
+        for dock in &mut self.docks {
+            dock.overlapping.remove(&toplevel.id());
+        }
+    }
+
+    pub(super) fn release_dock(&mut self, surface: &WlSurface) {
+        let now = self.now();
+        if let Some(dock) = self.docks.iter_mut().find(|dock| dock.is_on(surface)) {
+            dock.held_open = false;
+            if !dock.hovering {
+                dock.reveal.pointer_left(now);
+            }
+        }
+    }
+
+    fn click(&mut self, at: usize, press: Press) {
+        let dock = &mut self.docks[at];
+        let gesture = match press.button {
+            BTN_LEFT if dock.keyed && self.modifiers.shift => Gesture::ShiftClick,
+            BTN_LEFT if dock.keyed && self.modifiers.ctrl => Gesture::CtrlClick,
+            BTN_LEFT => Gesture::Click,
+            BTN_MIDDLE => Gesture::MiddleClick,
+            BTN_RIGHT => Gesture::RightClick,
+            _ => return dock.stop_listening(),
         };
-        let action = self.config.dock.actions.action_for(gesture);
-        for effect in effects(action, item, &self.windows) {
-            self.perform(effect);
+        dock.stop_listening();
+        match self.config.dock.actions.action_for(gesture) {
+            Action::Menu => self.open_menu(at, press.index),
+            action => {
+                for effect in effects(action, &press.item, &press.windows) {
+                    self.perform(effect);
+                }
+            }
         }
     }
 }
@@ -411,12 +624,20 @@ impl Berth {
 impl Dispatch<ZcosmicOverlapNotificationV1, ()> for Berth {
     fn event(
         berth: &mut Self,
-        _: &ZcosmicOverlapNotificationV1,
+        notification: &ZcosmicOverlapNotificationV1,
         event: zcosmic_overlap_notification_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let now = berth.now();
+        let Some(dock) = berth
+            .docks
+            .iter_mut()
+            .find(|dock| dock.overlap.as_ref() == Some(notification))
+        else {
+            return;
+        };
         match event {
             zcosmic_overlap_notification_v1::Event::ToplevelEnter {
                 toplevel,
@@ -426,19 +647,14 @@ impl Dispatch<ZcosmicOverlapNotificationV1, ()> for Berth {
                 height,
             } => {
                 let covered = Rect::new(x as f32, y as f32, width as f32, height as f32);
-                berth.dock.overlapping.insert(toplevel.id(), covered);
+                dock.overlapping.insert(toplevel.id(), covered);
             }
             zcosmic_overlap_notification_v1::Event::ToplevelLeave { toplevel } => {
-                berth.dock.overlapping.remove(&toplevel.id());
+                dock.overlapping.remove(&toplevel.id());
             }
             _ => return,
         }
-        let now = berth.now();
-        let obstructed = berth.dock.is_obstructed();
-        log::debug!(
-            "windows over the dock: {:?}, in its way: {obstructed}",
-            berth.dock.overlapping.values()
-        );
-        berth.dock.reveal.obstruction_changed(obstructed, now);
+        let obstructed = dock.is_obstructed();
+        dock.reveal.obstruction_changed(obstructed, now);
     }
 }

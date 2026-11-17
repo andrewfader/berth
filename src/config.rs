@@ -3,6 +3,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -14,6 +15,7 @@ use crate::dock::reveal::Autohide;
 pub struct Config {
     pub dock: Dock,
     pub switcher: Switcher,
+    pub animation: Animation,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -48,6 +50,8 @@ pub struct Gestures {
     pub click: Action,
     pub middle_click: Action,
     pub right_click: Action,
+    pub shift_click: Action,
+    pub ctrl_click: Action,
     pub scroll_up: Action,
     pub scroll_down: Action,
 }
@@ -57,7 +61,9 @@ impl Default for Gestures {
         Self {
             click: Action::Toggle,
             middle_click: Action::Launch,
-            right_click: Action::Minimize,
+            right_click: Action::Menu,
+            shift_click: Action::Launch,
+            ctrl_click: Action::Close,
             scroll_up: Action::CycleBack,
             scroll_down: Action::Cycle,
         }
@@ -65,11 +71,17 @@ impl Default for Gestures {
 }
 
 impl Gestures {
+    pub fn distinguish_modifiers(&self) -> bool {
+        self.shift_click != self.click || self.ctrl_click != self.click
+    }
+
     pub fn action_for(&self, gesture: Gesture) -> Action {
         match gesture {
             Gesture::Click => self.click,
             Gesture::MiddleClick => self.middle_click,
             Gesture::RightClick => self.right_click,
+            Gesture::ShiftClick => self.shift_click,
+            Gesture::CtrlClick => self.ctrl_click,
             Gesture::ScrollUp => self.scroll_up,
             Gesture::ScrollDown => self.scroll_down,
         }
@@ -89,6 +101,46 @@ impl Default for Switcher {
             opacity: 0.45,
             blur: true,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Launching {
+    #[default]
+    Bounce,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Animation {
+    pub enabled: bool,
+    pub speed: f32,
+    pub launch: Launching,
+}
+
+impl Default for Animation {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            speed: 1.0,
+            launch: Launching::Bounce,
+        }
+    }
+}
+
+impl Animation {
+    pub fn lasting(&self, usual: Duration) -> Duration {
+        if self.enabled {
+            usual.div_f32(self.speed)
+        } else {
+            Duration::ZERO
+        }
+    }
+
+    pub fn bounces_on_launch(&self) -> bool {
+        self.enabled && self.launch == Launching::Bounce
     }
 }
 
@@ -154,6 +206,11 @@ impl Config {
             (0.0..=1.0).contains(&self.switcher.opacity),
             "switcher.opacity",
             "between 0.0 and 1.0",
+        )?;
+        within(
+            (0.25..=4.0).contains(&self.animation.speed),
+            "animation.speed",
+            "between 0.25 and 4.0",
         )?;
         Ok(self)
     }
@@ -239,10 +296,59 @@ mod tests {
             config.dock.actions.action_for(Gesture::ScrollUp),
             Action::CycleBack
         );
+        assert_eq!(config.dock.actions.action_for(Gesture::RightClick), Action::Menu);
+    }
+
+    #[test]
+    fn a_click_with_shift_or_control_held_can_do_something_else() {
+        let config =
+            Config::parse("[dock.actions]\nshift-click = \"quit\"\nctrl-click = \"minimize\"").unwrap();
+
+        assert_eq!(config.dock.actions.action_for(Gesture::ShiftClick), Action::Quit);
         assert_eq!(
-            config.dock.actions.action_for(Gesture::RightClick),
+            config.dock.actions.action_for(Gesture::CtrlClick),
             Action::Minimize
         );
+        assert!(config.dock.actions.distinguish_modifiers());
+    }
+
+    #[test]
+    fn modifiers_are_not_watched_when_they_change_nothing() {
+        let config = Config::parse(
+            "[dock.actions]\nclick = \"focus\"\nshift-click = \"focus\"\nctrl-click = \"focus\"",
+        )
+        .unwrap();
+
+        assert!(!config.dock.actions.distinguish_modifiers());
+    }
+
+    #[test]
+    fn animations_run_at_the_usual_pace_unless_told_otherwise() {
+        let usual = Duration::from_millis(200);
+
+        assert_eq!(Config::default().animation.lasting(usual), usual);
+        assert!(Config::default().animation.bounces_on_launch());
+    }
+
+    #[test]
+    fn animations_can_be_sped_up_slowed_down_or_turned_off() {
+        let usual = Duration::from_millis(200);
+        let pace = |text: &str| Config::parse(text).unwrap().animation;
+
+        assert_eq!(
+            pace("[animation]\nspeed = 2.0").lasting(usual),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            pace("[animation]\nspeed = 0.5").lasting(usual),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            pace("[animation]\nenabled = false").lasting(usual),
+            Duration::ZERO
+        );
+        assert!(!pace("[animation]\nenabled = false").bounces_on_launch());
+        assert!(!pace("[animation]\nlaunch = \"none\"").bounces_on_launch());
     }
 
     #[test]
@@ -286,6 +392,10 @@ mod tests {
         assert_eq!(
             rejection("[dock]\nicon-size = 4"),
             "dock.icon-size must be between 16 and 256"
+        );
+        assert_eq!(
+            rejection("[animation]\nspeed = 0"),
+            "animation.speed must be between 0.25 and 4.0"
         );
         assert_eq!(
             rejection("[switcher]\nopacity = -1"),

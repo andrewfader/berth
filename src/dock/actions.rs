@@ -8,6 +8,8 @@ pub enum Gesture {
     Click,
     MiddleClick,
     RightClick,
+    ShiftClick,
+    CtrlClick,
     ScrollUp,
     ScrollDown,
 }
@@ -23,6 +25,7 @@ pub enum Action {
     Minimize,
     Close,
     Quit,
+    Menu,
     None,
 }
 
@@ -32,6 +35,8 @@ pub enum Effect {
     Activate(WindowId),
     Minimize(WindowId),
     Close(WindowId),
+    Pin(AppId),
+    Unpin(AppId),
 }
 
 pub fn effects(action: Action, item: &DockItem, windows: &Windows) -> Vec<Effect> {
@@ -40,7 +45,7 @@ pub fn effects(action: Action, item: &DockItem, windows: &Windows) -> Vec<Effect
     let active = item.active_window(windows);
 
     match (action, most_recent) {
-        (Action::None, _) => Vec::new(),
+        (Action::None | Action::Menu, _) => Vec::new(),
         (Action::Launch, _) => launch(),
         (Action::Focus | Action::Toggle | Action::Cycle | Action::CycleBack, None) => launch(),
         (Action::Minimize | Action::Close | Action::Quit, None) => Vec::new(),
@@ -108,7 +113,13 @@ mod tests {
     fn there_is_nothing_to_minimize_or_close_for_an_app_that_is_not_running() {
         let nothing_open = Windows::default();
 
-        for action in [Action::Minimize, Action::Close, Action::Quit, Action::None] {
+        for action in [
+            Action::Minimize,
+            Action::Close,
+            Action::Quit,
+            Action::Menu,
+            Action::None,
+        ] {
             assert_eq!(on_app("editor", action, &nothing_open), [], "{action:?}");
         }
     }

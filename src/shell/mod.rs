@@ -1,6 +1,7 @@
 mod canvas;
 mod capture;
 mod dock;
+mod menu;
 mod switcher;
 
 use std::collections::HashMap;
@@ -17,6 +18,7 @@ use cosmic_client_toolkit::cosmic_protocols::toplevel_info::v1::client::zcosmic_
 use cosmic_client_toolkit::cosmic_protocols::toplevel_management::v1::client::zcosmic_toplevel_manager_v1;
 use cosmic_client_toolkit::screencopy::ScreencopyState;
 use cosmic_client_toolkit::sctk::compositor::{CompositorHandler, CompositorState};
+use cosmic_client_toolkit::sctk::globals::GlobalData;
 use cosmic_client_toolkit::sctk::output::{OutputHandler, OutputState};
 use cosmic_client_toolkit::sctk::registry::{ProvidesRegistryState, RegistryState};
 use cosmic_client_toolkit::sctk::seat::keyboard::{
@@ -27,12 +29,15 @@ use cosmic_client_toolkit::sctk::seat::{Capability, SeatHandler, SeatState};
 use cosmic_client_toolkit::sctk::shell::wlr_layer::{
     LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
 };
+use cosmic_client_toolkit::sctk::shell::xdg::XdgShell;
+use cosmic_client_toolkit::sctk::shell::xdg::popup::{Popup, PopupConfigure, PopupHandler};
 use cosmic_client_toolkit::sctk::shm::slot::SlotPool;
 use cosmic_client_toolkit::sctk::shm::{Shm, ShmHandler};
 use cosmic_client_toolkit::sctk::subcompositor::SubcompositorState;
 use cosmic_client_toolkit::sctk::{
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
-    delegate_registry, delegate_seat, delegate_shm, delegate_subcompositor, registry_handlers,
+    delegate_registry, delegate_seat, delegate_shm, delegate_subcompositor, delegate_xdg_popup,
+    registry_handlers,
 };
 use cosmic_client_toolkit::toplevel_info::{ToplevelInfoHandler, ToplevelInfoState};
 use cosmic_client_toolkit::toplevel_management::{ToplevelManagerHandler, ToplevelManagerState};
@@ -42,7 +47,7 @@ use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_keyboard::WlKeyboard, wl_output, wl_pointer::WlPointer, wl_seat::WlSeat, wl_shm,
     wl_surface::WlSurface,
 };
-use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, delegate_noop};
+use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, delegate_dispatch, delegate_noop};
 use wayland_protocols::ext::background_effect::v1::client::{
     ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1,
     ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1,
@@ -53,17 +58,21 @@ use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1::ZxdgDecorationManagerV1;
+use wayland_protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
 
 use crate::apps::{self, Catalog};
-use crate::config::{Config, config_home};
+use crate::config::{Config, ConfigError, config_home};
 use crate::cosmic;
 use crate::dock::actions::Effect;
 use crate::icons::Icons;
 use crate::ipc::{self, Request};
+use crate::pins::{self, Pins};
 use crate::text::Typesetter;
 use crate::windows::{self, AppId, Window, WindowId, Windows};
 use capture::Thumbnails;
 use dock::DockView;
+use menu::MenuView;
 use switcher::SwitcherView;
 
 pub struct Extras {
@@ -83,6 +92,7 @@ pub struct Berth {
     pool: SlotPool,
     format: wl_shm::Format,
     layer_shell: LayerShell,
+    xdg_shell: XdgShell,
     toplevels: ToplevelInfoState,
     manager: Option<ToplevelManagerState>,
     screencopy: ScreencopyState,
@@ -101,7 +111,10 @@ pub struct Berth {
     windows: Windows,
     ids: HashMap<ExtForeignToplevelHandleV1, WindowId>,
     opened: u32,
-    dock: DockView,
+    pins: Pins,
+    docks: Vec<DockView>,
+    menu: Option<MenuView>,
+    launching: HashMap<AppId, Duration>,
     switcher: Option<SwitcherView>,
     thumbnails: Thumbnails,
     leaving: bool,
@@ -158,7 +171,8 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         wl_shm::Format::Argb8888
     };
     let catalog = Catalog::installed();
-    let dock = DockView::open(&config, &catalog, &compositor, &layer_shell, &extras, &qh);
+    let xdg_shell = XdgShell::bind(&globals, &qh).context("the compositor does not support xdg-shell")?;
+    let pins = pinned_apps(&config, &catalog);
 
     let mut berth = Berth {
         outputs: OutputState::new(&globals, &qh),
@@ -166,17 +180,14 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         pool: SlotPool::new(1 << 20, &shm)?,
         manager: ToplevelManagerState::try_new(&registry, &qh),
         screencopy: ScreencopyState::new(&globals, &qh),
-        icons: Icons::themed(
-            cosmic::setting(&config_home(), cosmic::ICON_THEME)
-                .or_else(freedesktop_icons::default_theme_gtk)
-                .unwrap_or_else(|| "hicolor".to_owned()),
-        ),
+        icons: themed_icons(),
         registry,
         compositor,
         subcompositor,
         shm,
         format,
         layer_shell,
+        xdg_shell,
         toplevels,
         extras,
         seat: None,
@@ -192,13 +203,15 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         windows: Windows::default(),
         ids: HashMap::new(),
         opened: 0,
-        dock,
+        pins,
+        docks: Vec::new(),
+        menu: None,
+        launching: HashMap::new(),
         switcher: None,
         thumbnails: Thumbnails::default(),
         leaving: false,
     };
 
-    berth.refresh_dock_items();
     while !berth.leaving {
         let wait = berth
             .next_deadline()
@@ -210,21 +223,48 @@ pub fn run(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn pinned_apps(config: &Config, catalog: &Catalog) -> Pins {
+    match &config.dock.pinned {
+        Some(fixed) => Pins::fixed(catalog.pinned(fixed)),
+        None => {
+            let store = pins::store();
+            let wanted = Pins::remembered(&store)
+                .or_else(|| cosmic::setting(&config_home(), cosmic::FAVORITES))
+                .unwrap_or_default();
+            Pins::kept_in(store, catalog.pinned(&wanted))
+        }
+    }
+}
+
+fn themed_icons() -> Icons {
+    Icons::themed(
+        cosmic::setting(&config_home(), cosmic::ICON_THEME)
+            .or_else(freedesktop_icons::default_theme_gtk)
+            .unwrap_or_else(|| "hicolor".to_owned()),
+    )
+}
+
 impl Berth {
     fn now(&self) -> Duration {
         self.started.elapsed()
     }
 
     fn next_deadline(&self) -> Option<Duration> {
-        [self.dock_deadline(), self.switcher_deadline()]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.dock_deadline(),
+            self.menu_deadline(),
+            self.switcher_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn tick(&mut self) {
-        self.settle_dock();
-        self.paint_dock();
+        self.settle_docks();
+        self.paint_docks();
+        self.settle_menu();
+        self.paint_menu();
         self.settle_switcher();
         self.paint_switcher();
     }
@@ -236,19 +276,41 @@ impl Berth {
                 "ok\n".to_owned()
             }
             Request::Windows => windows::listing(&self.windows),
+            Request::Reload => match self.reload() {
+                Ok(()) => "ok\n".to_owned(),
+                Err(problem) => format!("error: {problem}\n"),
+            },
         }
+    }
+
+    fn reload(&mut self) -> Result<(), ConfigError> {
+        self.config = Config::load(&Config::path())?;
+        self.catalog = Catalog::installed();
+        self.identities.clear();
+        self.pins = pinned_apps(&self.config, &self.catalog);
+        self.icons = themed_icons();
+        self.switcher = None;
+        self.close_docks(|_| true);
+        for output in self.outputs.outputs().collect::<Vec<_>>() {
+            self.open_dock(output);
+        }
+        Ok(())
     }
 
     fn perform(&mut self, effect: Effect) {
         match effect {
             Effect::Launch(app) => match self.catalog.command(&app) {
-                Some(command) => {
-                    if let Err(error) = apps::launch(&command) {
-                        log::error!("could not start {}: {error}", app.as_str());
+                Some(command) => match apps::launch(&command) {
+                    Ok(()) => {
+                        self.launching.insert(app, self.now());
+                        self.refresh_dock_items();
                     }
-                }
+                    Err(error) => log::error!("could not start {}: {error}", app.as_str()),
+                },
                 None => log::warn!("{} has no launcher to start it with", app.as_str()),
             },
+            Effect::Pin(app) => self.repin(|pins| pins.pin(app)),
+            Effect::Unpin(app) => self.repin(|pins| pins.unpin(&app)),
             Effect::Activate(window) => {
                 self.manage(window, |manager, toplevel, seat| manager.activate(toplevel, seat))
             }
@@ -257,6 +319,13 @@ impl Berth {
             }
             Effect::Close(window) => self.manage(window, |manager, toplevel, _| manager.close(toplevel)),
         }
+    }
+
+    fn repin(&mut self, change: impl FnOnce(&mut Pins) -> std::io::Result<()>) {
+        if let Err(error) = change(&mut self.pins) {
+            log::error!("could not save the pinned apps: {error}");
+        }
+        self.refresh_dock_items();
     }
 
     fn manage(
@@ -301,6 +370,7 @@ impl Berth {
                 app
             }
         };
+        self.launching.remove(&app);
         self.windows.report(Window {
             id,
             app,
@@ -320,6 +390,7 @@ impl Berth {
 
     fn rescale(&mut self, surface: &WlSurface, scale120: u32, fractional: bool) {
         self.rescale_dock(surface, scale120, fractional);
+        self.rescale_menu(surface, scale120, fractional);
         if let Some(view) = &mut self.switcher {
             view.rescale(surface, scale120, fractional);
         }
@@ -401,6 +472,7 @@ impl CompositorHandler for Berth {
 
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &WlSurface, _: u32) {
         self.dock_frame(surface);
+        self.menu_frame(surface);
         if let Some(view) = &mut self.switcher {
             view.frame(surface);
         }
@@ -430,8 +502,8 @@ impl LayerShellHandler for Berth {
         if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
             self.switcher = None;
         } else {
-            log::error!("the compositor closed the dock");
-            std::process::exit(1);
+            log::warn!("the compositor closed a dock");
+            self.close_docks(|dock| dock.owns(layer));
         }
     }
 
@@ -446,7 +518,7 @@ impl LayerShellHandler for Berth {
         if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
             self.switcher_configured(configure.new_size);
         } else {
-            self.dock_configured(configure.new_size);
+            self.dock_configured(layer, configure.new_size);
         }
     }
 }
@@ -510,8 +582,10 @@ impl PointerHandler for Berth {
         events: &[PointerEvent],
     ) {
         for event in events {
-            if self.dock.is_on(&event.surface) {
-                self.dock_pointer(event);
+            if let Some(at) = self.dock_at(&event.surface) {
+                self.dock_pointer(at, event);
+            } else if self.menu.as_ref().is_some_and(|menu| menu.is_on(&event.surface)) {
+                self.menu_pointer(event);
             } else {
                 self.switcher_pointer(event);
             }
@@ -525,12 +599,15 @@ impl KeyboardHandler for Berth {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &WlKeyboard,
-        _: &WlSurface,
+        surface: &WlSurface,
         _: u32,
         _: &[u32],
         _: &[Keysym],
     ) {
-        self.switcher_focused();
+        match self.dock_at(surface) {
+            Some(_) => self.dock_focused(surface),
+            None => self.switcher_focused(),
+        }
     }
 
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: &WlSurface, _: u32) {}
@@ -556,6 +633,7 @@ impl KeyboardHandler for Berth {
         _: u32,
     ) {
         self.modifiers = modifiers;
+        self.dock_modifiers();
         self.switcher_modifiers();
     }
 }
@@ -565,11 +643,39 @@ impl OutputHandler for Berth {
         &mut self.outputs
     }
 
-    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        self.open_dock(output);
+    }
 
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        self.output_changed(&output);
+    }
 
-    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        self.close_docks(|dock| dock.is_for(&output));
+    }
+}
+
+impl Dispatch<ZxdgDecorationManagerV1, GlobalData> for Berth {
+    fn event(
+        _: &mut Self,
+        _: &ZxdgDecorationManagerV1,
+        _: <ZxdgDecorationManagerV1 as wayland_client::Proxy>::Event,
+        _: &GlobalData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl PopupHandler for Berth {
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup, _: PopupConfigure) {
+        self.menu_configured(popup);
+    }
+
+    fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
+        self.menu_dismissed(popup);
+    }
 }
 
 impl ShmHandler for Berth {
@@ -609,6 +715,8 @@ delegate_seat!(Berth);
 delegate_pointer!(Berth);
 delegate_keyboard!(Berth);
 delegate_layer!(Berth);
+delegate_dispatch!(Berth: [XdgWmBase: GlobalData] => XdgShell);
+delegate_xdg_popup!(Berth);
 delegate_registry!(Berth);
 delegate_toplevel_info!(Berth);
 delegate_toplevel_manager!(Berth);

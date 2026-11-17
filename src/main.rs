@@ -18,6 +18,8 @@ enum Command {
     Switch { towards: Towards },
     /// List the windows berth tracks, most recently used first
     Windows,
+    /// Read the configuration again without restarting
+    Reload,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -39,6 +41,7 @@ fn main() -> ExitCode {
             towards: Towards::Previous,
         }) => ask(Request::Switch(Direction::Previous)),
         Some(Command::Windows) => ask(Request::Windows),
+        Some(Command::Reload) => ask(Request::Reload),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

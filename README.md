@@ -3,10 +3,10 @@
 A dock and an Alt+Tab window switcher for the COSMIC desktop. It is a normal
 Wayland client: no compositor patch, no fork of COSMIC.
 
-- **Dock**: translucent, blurred by the compositor, icons swell under the pointer.
-  It hides only when a window actually needs its space and returns when the
-  pointer touches the bottom edge. What each click and scroll does is yours to
-  decide.
+- **Dock**: one on every monitor, translucent, blurred by the compositor, icons
+  swell under the pointer. It hides only when a window actually needs its space
+  and returns when the pointer touches the bottom edge. What each click and
+  scroll does is yours to decide, and a right-click opens a menu.
 - **Switcher**: hold Alt and tap Tab for a row of live window thumbnails over a
   dimmed, blurred desktop. Release Alt to switch.
 
@@ -40,9 +40,10 @@ UNIT
 systemctl --user enable --now berth.service
 ```
 
-`Restart=on-failure` brings the dock back when the compositor closes it, which
-it does when the monitor the dock is on goes away. `KillMode=process` keeps the
-apps you started from the dock running through such a restart.
+`Restart=on-failure` brings berth back if it crashes or the compositor restarts.
+`KillMode=process` keeps the apps you started from the dock running through
+such a restart. Plugging and unplugging monitors needs no restart: each monitor
+gets a dock when it appears and loses it when it goes.
 
 ### Replace COSMIC's own dock and switcher
 
@@ -74,14 +75,21 @@ magnification = 1.6       # 1.0 turns the swell off, up to 3.0
 opacity = 0.55            # 0.0 clear to 1.0 solid
 blur = true
 autohide = "intelligent"  # "intelligent", "always" or "never"
-# pinned = ["firefox", "org.gnome.Nautilus"]   # default: the COSMIC dock's favorites
+# pinned = ["firefox", "org.gnome.Nautilus"]   # see "Pinned apps" below
 
 [dock.actions]
 click = "toggle"
+shift-click = "launch"
+ctrl-click = "close"
 middle-click = "launch"
-right-click = "minimize"
+right-click = "menu"
 scroll-up = "cycle-back"
 scroll-down = "cycle"
+
+[animation]
+enabled = true            # false: everything moves in a single step
+speed = 1.0               # 0.25 (slow) to 4.0 (fast)
+launch = "bounce"         # "bounce" or "none": the hop of a starting app's icon
 
 [switcher]
 opacity = 0.45            # how dark the desktop gets behind the row
@@ -97,10 +105,28 @@ blur = true
 | `minimize` | minimizes all its windows | nothing |
 | `close` | closes its most recently used window | nothing |
 | `quit` | closes all its windows | nothing |
+| `menu` | opens the menu: its windows, New Window, Pin/Unpin, Quit | opens the menu: Open, Unpin |
 | `none` | nothing | nothing |
 
 A misspelled key, an unknown action or a value out of range stops startup with a
 message naming it.
+
+`berth reload` reads the file again without a restart. If the new file has a
+mistake, berth says so and keeps running with the old settings.
+
+### Pinned apps
+
+Without `pinned` in the file, the dock starts from the COSMIC dock's favorites
+and "Pin to Dock" / "Unpin from Dock" in the menu change it; the result is kept
+in `~/.local/state/berth/pinned`. With `pinned` in the file, the file decides and
+the menu does not offer pinning.
+
+### Shift-click and Ctrl-click
+
+COSMIC tells a program about modifier keys only while it has the keyboard, so
+berth borrows the keyboard for the length of a left click and hands it straight
+back. To avoid even that, give `shift-click` and `ctrl-click` the same action as
+`click`; berth then never asks for the keyboard.
 
 `berth windows` lists the windows berth tracks with the app id it matched them
 to, most recently used first. Those ids are what `pinned` takes.
@@ -123,12 +149,11 @@ keyboard, so they need `sway`, `cosmic-comp`, `cosmic-randr`, `grim` and
 
 ## Not done
 
-- One dock, on the output the compositor picks. No dock per monitor.
-- No right-click menu, and no pinning from the dock: edit `pinned`.
-- No Shift-click or Ctrl-click gestures. COSMIC tells a client about modifier
-  keys only while it has keyboard focus, and a dock that takes focus steals it
-  from your windows.
-- The dock sits at the bottom edge only.
-- No launch animation while an app starts.
+- The dock sits at the bottom edge only, and every monitor shows the same apps.
+- The menu is pointer-only: no keyboard navigation, and it closes when the
+  pointer leaves it rather than on a click elsewhere.
 - The switcher lists every window, not only those on the current workspace.
-- Configuration is read at startup; restart berth after changing it.
+- A dock that still does not fit at the smallest icon size (16) runs off the
+  sides of the monitor.
+- Multi-monitor behavior is tested on sway, because a nested COSMIC has a single
+  output. It has not been run on a real multi-monitor COSMIC session yet.

@@ -23,7 +23,7 @@ pub struct Window {
     pub minimized: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Windows {
     most_recent_first: Vec<Window>,
 }

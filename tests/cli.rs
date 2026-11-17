@@ -121,3 +121,40 @@ fn asked_to_stop_the_dock_leaves_the_screen_and_tidies_up_after_itself() {
         desktop.screenshot().count(GREEN) > 0
     });
 }
+
+#[test]
+fn a_changed_configuration_takes_effect_on_reload() {
+    let desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    eventually("the dock is drawn", || desktop.screenshot().count(RED) > 0);
+
+    desktop.configure("[dock]\npinned = [\"blue\"]\n");
+    let reloaded = desktop.run(&["reload"]);
+
+    assert!(reloaded.status.success(), "{}", complaint(&reloaded));
+    let alone = dock_of(1).1[0];
+    eventually("only the blue app is pinned now", || {
+        let shot = desktop.screenshot();
+        shot.shows(BLUE, alone.center_x(), alone.center_y()) && shot.count(RED) == 0
+    });
+}
+
+#[test]
+fn a_broken_configuration_is_refused_on_reload_and_the_dock_carries_on() {
+    let desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    eventually("the dock is drawn", || desktop.screenshot().count(RED) > 0);
+
+    desktop.configure("[dock]\nopacity = 7\n");
+    let refused = desktop.run(&["reload"]);
+
+    assert!(!refused.status.success());
+    assert_eq!(
+        complaint(&refused),
+        "berth: dock.opacity must be between 0.0 and 1.0\n"
+    );
+    assert!(desktop.run(&["windows"]).status.success());
+    assert!(
+        desktop
+            .screenshot()
+            .shows(RED, icon(0).center_x(), icon(0).center_y())
+    );
+}

@@ -2,6 +2,8 @@ use std::f32::consts::FRAC_PI_2;
 
 use crate::geometry::Rect;
 
+pub const SMALLEST_ICON: f32 = 16.0;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
     pub icon: f32,
@@ -24,6 +26,14 @@ impl Metrics {
             reach: icon * 2.5,
             label: 30.0,
         }
+    }
+
+    pub fn fitted(icon: f32, magnification: f32, items: usize, room: f32) -> Self {
+        let mut metrics = Self::for_icon(icon, magnification);
+        while metrics.surface(items).0 > room && metrics.icon > SMALLEST_ICON {
+            metrics = Self::for_icon((metrics.icon - 2.0).max(SMALLEST_ICON), magnification);
+        }
+        metrics
     }
 
     pub fn surface(&self, items: usize) -> (f32, f32) {
@@ -315,6 +325,28 @@ mod tests {
         assert_eq!(Layout::item_at(&metrics(), 4, rest.panel.x - 1.0), None);
         assert_eq!(Layout::item_at(&metrics(), 4, rest.panel.right() + 1.0), None);
         assert_eq!(Layout::item_at(&metrics(), 0, rest.panel.center_x()), None);
+    }
+
+    #[test]
+    fn a_dock_with_room_to_spare_keeps_the_icon_size_asked_for() {
+        assert_eq!(
+            Metrics::fitted(48.0, 1.5, 5, 1920.0),
+            Metrics::for_icon(48.0, 1.5)
+        );
+    }
+
+    #[test]
+    fn a_crowded_dock_shrinks_its_icons_until_it_fits_the_screen() {
+        let crowded = Metrics::fitted(48.0, 1.5, 30, 1280.0);
+
+        assert!(crowded.icon < 48.0 && crowded.icon > SMALLEST_ICON);
+        assert!(crowded.surface(30).0 <= 1280.0);
+        assert!(Metrics::for_icon(crowded.icon + 2.0, 1.5).surface(30).0 > 1280.0);
+    }
+
+    #[test]
+    fn icons_never_shrink_below_a_size_that_can_still_be_hit() {
+        assert_eq!(Metrics::fitted(48.0, 1.5, 500, 800.0).icon, SMALLEST_ICON);
     }
 
     #[test]

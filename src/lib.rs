@@ -7,6 +7,7 @@ pub mod geometry;
 pub mod icons;
 pub mod ipc;
 pub mod paint;
+pub mod pins;
 pub mod shell;
 pub mod switcher;
 pub mod text;

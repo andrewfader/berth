@@ -10,6 +10,7 @@ pub struct Tile<'a> {
     pub icon: &'a Pixmap,
     pub running: bool,
     pub focused: bool,
+    pub lift: f32,
 }
 
 pub struct Scene<'a> {
@@ -40,7 +41,14 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
     );
 
     for (tile, place) in scene.tiles.iter().zip(&layout.icons) {
-        picture(canvas, tile.icon, *place, 0.0, Finish::Fine, scale);
+        picture(
+            canvas,
+            tile.icon,
+            place.moved(0.0, -tile.lift),
+            0.0,
+            Finish::Fine,
+            scale,
+        );
         if tile.running {
             let wide = if tile.focused { 14.0 } else { 4.0 };
             let mark = Rect::new(
@@ -113,6 +121,7 @@ mod tests {
                 icon: &icon,
                 running: *running,
                 focused: *focused,
+                lift: 0.0,
             })
             .collect();
         let mut pixmap = Pixmap::new((width * scale) as u32, (height * scale) as u32).unwrap();
@@ -233,6 +242,38 @@ mod tests {
             [0, 255, 0, 255]
         );
         assert_eq!(alpha(&rest.pixmap, icon.center_x(), icon.y - 18.0), 0);
+    }
+
+    #[test]
+    fn a_hopping_icon_is_drawn_above_its_place() {
+        let (width, height) = metrics().surface(1);
+        let layout = Layout::arrange(&metrics(), 1, Pose::RESTING);
+        let icon = solid(96, 255, 0, 0);
+        let tiles = [Tile {
+            icon: &icon,
+            running: false,
+            focused: false,
+            lift: 12.0,
+        }];
+        let mut pixmap = Pixmap::new(width as u32, height as u32).unwrap();
+
+        paint(
+            &mut pixmap.as_mut(),
+            &Scene {
+                layout: &layout,
+                tiles: &tiles,
+                label: None,
+                opacity: 0.5,
+                scale: 1.0,
+            },
+        );
+
+        let place = layout.icons[0];
+        assert_eq!(rgba(&pixmap, place.center_x(), place.y - 10.0), [255, 0, 0, 255]);
+        assert_ne!(
+            rgba(&pixmap, place.center_x(), place.bottom() - 2.0),
+            [255, 0, 0, 255]
+        );
     }
 
     #[test]

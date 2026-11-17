@@ -92,6 +92,45 @@ fn clicking_the_focused_app_minimizes_it_and_clicking_again_brings_it_back() {
 }
 
 #[test]
+fn shift_and_control_turn_a_click_into_different_gestures() {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    desktop.open("red", "red window", "ff0000", "500x300");
+
+    desktop.press(Key::Shift);
+    desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Left);
+    desktop.release(Key::Shift);
+    eventually("shift-click started a second red window", || {
+        desktop.windows().len() == 2
+    });
+
+    desktop.press(Key::Control);
+    desktop.click(Button::Left);
+    desktop.release(Key::Control);
+    eventually("control-click closed the one in front", || {
+        desktop.windows().len() == 1
+    });
+}
+
+#[test]
+fn a_click_on_the_dock_leaves_the_keyboard_with_the_window_it_raised() {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    desktop.open("red", "red window", "ff0000", "500x300");
+    desktop.open("green", "green window", "00ff00", "500x300");
+
+    desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Left);
+    eventually("the red window is raised", || {
+        desktop.focused().as_deref() == Some("red window")
+    });
+    desktop.pointer(400.0, 300.0);
+
+    never(
+        "the red window must keep the focus",
+        Duration::from_millis(800),
+        || desktop.focused().as_deref() != Some("red window"),
+    );
+}
+
+#[test]
 fn scrolling_over_an_app_walks_through_its_windows() {
     let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
     desktop.open("red", "first red", "ff0000", "500x300");

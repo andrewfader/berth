@@ -45,7 +45,15 @@ Never skip, delete or weaken a scenario to get there.
   and the request then deadlocks the whole client.
 - COSMIC silently ignores `notify_on_overlap` for a layer surface that has not
   been mapped yet. Subscribe after the first buffer is committed.
-- Keyboard modifiers reach a client only while it has keyboard focus.
+- Keyboard modifiers reach a client only while it has keyboard focus. The dock
+  asks for exclusive keyboard focus on a left press and gives it up at the
+  click; it acts on the windows as they were at the press, because focus moves
+  in between.
+- A nested COSMIC has one output. Scenarios about several monitors run berth
+  straight on headless sway (`Desktop::on_sway_with_monitors`), which has no
+  COSMIC protocols: no window states, no activation.
+- The menu is an xdg popup without a grab, so it never takes the keyboard. It
+  closes itself when the pointer has left both it and its dock.
 - The event loop takes SIGTERM and SIGINT through a signalfd, which blocks them
   for the process. A child inherits that mask, so `apps::launch` clears it
   before exec. Any new way of starting a program must do the same.

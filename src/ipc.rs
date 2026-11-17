@@ -10,11 +10,13 @@ use std::time::Duration;
 use crate::switcher::session::Direction;
 
 const PATIENCE: Duration = Duration::from_millis(500);
+const ATTENTION: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Switch(Direction),
     Windows,
+    Reload,
 }
 
 impl fmt::Display for Request {
@@ -23,6 +25,7 @@ impl fmt::Display for Request {
             Request::Switch(Direction::Next) => "switch next",
             Request::Switch(Direction::Previous) => "switch previous",
             Request::Windows => "windows",
+            Request::Reload => "reload",
         })
     }
 }
@@ -35,6 +38,7 @@ impl FromStr for Request {
             "switch next" => Ok(Request::Switch(Direction::Next)),
             "switch previous" => Ok(Request::Switch(Direction::Previous)),
             "windows" => Ok(Request::Windows),
+            "reload" => Ok(Request::Reload),
             other => Err(format!("unknown request: {other}")),
         }
     }
@@ -82,8 +86,8 @@ pub fn answer_pending(listener: &UnixListener, mut answer: impl FnMut(Request) -
 
 fn answer_one(stream: UnixStream, answer: &mut impl FnMut(Request) -> String) -> io::Result<()> {
     stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(PATIENCE))?;
-    stream.set_write_timeout(Some(PATIENCE))?;
+    stream.set_read_timeout(Some(ATTENTION))?;
+    stream.set_write_timeout(Some(ATTENTION))?;
     let mut line = String::new();
     BufReader::new(&stream).take(256).read_line(&mut line)?;
     let reply = match line.parse() {
@@ -119,6 +123,7 @@ mod tests {
             Request::Switch(Direction::Next),
             Request::Switch(Direction::Previous),
             Request::Windows,
+            Request::Reload,
         ] {
             assert_eq!(request.to_string().parse(), Ok(request));
         }
