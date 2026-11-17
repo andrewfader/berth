@@ -82,7 +82,7 @@ mod tests {
     use crate::windows::fixtures::*;
 
     fn on_app(app: &str, action: Action, windows: &Windows) -> Vec<Effect> {
-        let items = dock_items(&[AppId::new(app)], windows);
+        let items = dock_items(&[AppId::new(app)], windows, None);
         effects(action, &items[0], windows)
     }
 

@@ -78,3 +78,20 @@ fn a_crowded_dock_shrinks_its_icons_to_fit_a_narrow_monitor() {
         shot.count(RED) >= a_whole_icon && shot.count(MAGENTA) >= a_whole_icon
     });
 }
+
+#[test]
+fn a_monitor_can_be_given_pins_of_its_own() {
+    let desktop = Desktop::on_sway_with_monitors(
+        &[WIDE, SMALL],
+        &format!("[dock]\n{PINNED}[dock.monitor.HEADLESS-2]\npinned = [\"blue\"]\n"),
+    );
+
+    eventually("the first monitor shows the shared pins", || {
+        has_a_dock(&desktop, "HEADLESS-1", WIDE)
+    });
+    let alone = dock_on(SMALL, 1).1[0];
+    eventually("the second monitor shows only its own pin", || {
+        let shot = desktop.monitor("HEADLESS-2");
+        shot.shows(BLUE, alone.center_x(), alone.center_y()) && shot.count(RED) == 0 && shot.count(GREEN) == 0
+    });
+}

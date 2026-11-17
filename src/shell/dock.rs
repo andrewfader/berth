@@ -26,19 +26,19 @@ use super::canvas::{Canvas, Medium};
 use crate::animation::Animated;
 use crate::dock::actions::{Action, Gesture, effects};
 use crate::dock::bounce;
-use crate::dock::items::{DockItem, dock_items};
-use crate::dock::layout::{Layout, Metrics, Pose};
+use crate::dock::items::{DockItem, Shown, dock_items};
+use crate::dock::layout::{Edge, Layout, Metrics, Pose};
 use crate::dock::paint::{CORNER, Scene, Tile, paint};
 use crate::dock::reveal::{Autohide, Reveal};
 use crate::geometry::Rect;
 use crate::paint::rounded_rows;
-use crate::windows::Windows;
+use crate::windows::{AppId, Windows};
 
 const SWELL: Duration = Duration::from_millis(140);
 const SLIDE: Duration = Duration::from_millis(220);
 const KEYBOARD_PATIENCE: Duration = Duration::from_millis(150);
 const NOTCH: f64 = 15.0;
-const EDGE: i32 = 2;
+const EDGE: f32 = 2.0;
 
 struct Face {
     name: String,
@@ -50,16 +50,20 @@ struct Face {
 pub(super) struct Press {
     index: usize,
     button: u32,
+    serial: u32,
     item: DockItem,
     windows: Windows,
 }
 
 pub struct DockView {
     output: WlOutput,
+    name: Option<String>,
+    own_pins: Option<Vec<AppId>>,
     layer: LayerSurface,
     canvas: Canvas,
     blur: Option<ExtBackgroundEffectSurfaceV1>,
     overlap: Option<ZcosmicOverlapNotificationV1>,
+    edge: Edge,
     room: f32,
     metrics: Metrics,
     items: Vec<DockItem>,
@@ -116,15 +120,24 @@ impl DockView {
         self.held_open = true;
     }
 
-    pub fn is_hovered(&self) -> bool {
-        self.hovering
+    pub fn resting_icon(&self, index: usize) -> Option<Rect> {
+        self.resting().icons.get(index).copied()
     }
 
-    pub fn resting_icon(&self, index: usize) -> Option<Rect> {
-        Layout::arrange(&self.metrics, self.items.len(), Pose::RESTING)
-            .icons
-            .get(index)
-            .copied()
+    pub fn decides_its_own_pins(&self) -> bool {
+        self.own_pins.is_some()
+    }
+
+    pub fn edge(&self) -> Edge {
+        self.edge
+    }
+
+    fn lying(&self) -> (f32, f32) {
+        self.metrics.surface(self.items.len())
+    }
+
+    fn resting(&self) -> Layout {
+        Layout::arrange(&self.metrics, self.items.len(), Pose::RESTING).on(self.edge, self.lying())
     }
 
     pub fn item(&self, index: usize) -> Option<&DockItem> {
@@ -132,12 +145,13 @@ impl DockView {
     }
 
     fn fit(&mut self, wanted_icon: f32, magnification: f32) {
-        let metrics = Metrics::fitted(wanted_icon, magnification, self.items.len(), self.room);
+        let metrics =
+            Metrics::fitted(wanted_icon, magnification, self.items.len(), self.room).along(self.edge);
         if metrics.icon != self.metrics.icon {
             self.forget_pictures();
         }
         self.metrics = metrics;
-        let (wide, tall) = self.metrics.surface(self.items.len());
+        let (wide, tall) = self.edge.surface(self.lying());
         let size = (wide as u32, tall as u32);
         if size != self.size {
             self.size = size;
@@ -155,7 +169,7 @@ impl DockView {
     }
 
     fn resting_panel(&self) -> Rect {
-        Layout::arrange(&self.metrics, self.items.len(), Pose::RESTING).panel
+        self.resting().panel
     }
 
     fn is_obstructed(&self) -> bool {
@@ -187,8 +201,14 @@ impl Berth {
             Some("berth-dock"),
             Some(&output),
         );
-        let metrics = Metrics::for_icon(config.icon_size as f32, config.magnification);
-        layer.set_anchor(Anchor::BOTTOM);
+        let edge = config.edge;
+        let metrics = Metrics::for_icon(config.icon_size as f32, config.magnification).along(edge);
+        layer.set_anchor(match edge {
+            Edge::Bottom => Anchor::BOTTOM,
+            Edge::Top => Anchor::TOP,
+            Edge::Left => Anchor::LEFT,
+            Edge::Right => Anchor::RIGHT,
+        });
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_exclusive_zone(match config.autohide {
             Autohide::Never => metrics.travel() as i32,
@@ -201,8 +221,17 @@ impl Berth {
             .filter(|_| config.blur)
             .map(|manager| manager.get_background_effect(&surface, &self.qh, ()));
 
+        let name = self.outputs.info(&output).and_then(|info| info.name);
+        let own_pins = name
+            .as_ref()
+            .and_then(|name| config.monitor.get(name))
+            .and_then(|monitor| monitor.pinned.as_ref())
+            .map(|wanted| self.catalog.pinned(wanted));
         self.docks.push(DockView {
-            room: self.room_on(&output),
+            name,
+            own_pins,
+            edge,
+            room: self.room_on(&output, edge),
             output,
             canvas: Canvas::on(surface, &self.extras, &self.qh),
             layer,
@@ -241,14 +270,15 @@ impl Berth {
     }
 
     pub(super) fn output_changed(&mut self, output: &WlOutput) {
-        let room = self.room_on(output);
+        let edge = self.config.dock.edge;
+        let room = self.room_on(output, edge);
         if let Some(dock) = self.docks.iter_mut().find(|dock| dock.is_for(output)) {
             dock.room = room;
         }
         self.refresh_dock_items();
     }
 
-    fn room_on(&self, output: &WlOutput) -> f32 {
+    fn room_on(&self, output: &WlOutput, edge: Edge) -> f32 {
         self.outputs
             .info(output)
             .and_then(|info| {
@@ -260,15 +290,18 @@ impl Berth {
                 });
                 info.logical_size.or(scaled)
             })
-            .map_or(f32::INFINITY, |(wide, _)| wide as f32)
+            .map_or(f32::INFINITY, |(wide, tall)| edge.along(wide as f32, tall as f32))
     }
 
     pub(super) fn refresh_dock_items(&mut self) {
         let now = self.now();
-        let items = dock_items(self.pins.apps(), &self.windows);
         let (wanted_icon, magnification) =
             (self.config.dock.icon_size as f32, self.config.dock.magnification);
+        let own_monitor_only = self.config.dock.windows == Shown::ThisMonitor;
         for dock in &mut self.docks {
+            let pinned = dock.own_pins.as_deref().unwrap_or(self.pins.apps());
+            let monitor = dock.name.as_deref().filter(|_| own_monitor_only);
+            let items = dock_items(pinned, &self.windows, monitor);
             let same_apps = items
                 .iter()
                 .map(|item| &item.app)
@@ -284,7 +317,7 @@ impl Berth {
                     })
                     .collect();
             }
-            dock.items = items.clone();
+            dock.items = items;
             dock.fit(wanted_icon, magnification);
             let obstructed = dock.is_obstructed();
             dock.reveal.obstruction_changed(obstructed, now);
@@ -375,7 +408,9 @@ impl Berth {
             zoom,
             shown,
         };
-        let layout = Layout::arrange(&dock.metrics, dock.items.len(), pose);
+        let (edge, lying) = (dock.edge, dock.lying());
+        let flat = Layout::arrange(&dock.metrics, dock.items.len(), pose);
+        let layout = flat.on(edge, lying);
         let scale = dock.canvas.scale();
         let pixels = (dock.metrics.icon * dock.metrics.magnification * scale).ceil() as u32;
 
@@ -423,24 +458,25 @@ impl Berth {
 
         let surface = dock.canvas.surface().clone();
         if let Ok(region) = Region::new(&self.compositor) {
-            if shown <= 0.0 {
-                let panel = dock.resting_panel();
-                region.add(
-                    panel.x as i32,
-                    dock.size.1 as i32 - EDGE,
-                    panel.width as i32,
-                    EDGE,
-                );
+            let touchable = if shown <= 0.0 {
+                let panel = Layout::arrange(&dock.metrics, dock.items.len(), Pose::RESTING).panel;
+                Rect::new(panel.x, lying.1 - EDGE, panel.width, EDGE)
             } else {
-                let reach = layout.reach();
-                let top = reach.y.floor() as i32;
-                region.add(
-                    reach.x.floor() as i32,
-                    top,
-                    reach.width.ceil() as i32 + 1,
-                    dock.size.1 as i32 - top,
-                );
-            }
+                let reach = flat.reach();
+                Rect::new(
+                    reach.x.floor(),
+                    reach.y.floor(),
+                    reach.width.ceil() + 1.0,
+                    lying.1 - reach.y.floor(),
+                )
+            };
+            let touchable = edge.place(touchable, lying);
+            region.add(
+                touchable.x as i32,
+                touchable.y as i32,
+                touchable.width as i32,
+                touchable.height as i32,
+            );
             surface.set_input_region(Some(region.wl_region()));
         }
         if let Some(blur) = &dock.blur
@@ -462,6 +498,7 @@ impl Berth {
             layout: &layout,
             tiles: &tiles,
             label,
+            edge,
             opacity: self.config.dock.opacity,
             scale,
         };
@@ -488,8 +525,8 @@ impl Berth {
         let now = self.now();
         let swell = self.config.animation.lasting(SWELL);
         let watches_modifiers = self.config.dock.actions.distinguish_modifiers();
-        let x = event.position.0 as f32;
         let dock = &mut self.docks[at];
+        let x = dock.edge.along(event.position.0 as f32, event.position.1 as f32);
         let pointed = Layout::item_at(&dock.metrics, dock.items.len(), x);
         dock.canvas.invalidate();
         match event.kind {
@@ -511,11 +548,12 @@ impl Berth {
                     dock.reveal.pointer_left(now);
                 }
             }
-            PointerEventKind::Press { button, .. } => {
+            PointerEventKind::Press { button, serial, .. } => {
                 dock.press = pointed.and_then(|index| {
                     Some(Press {
                         index,
                         button,
+                        serial,
                         item: dock.items.get(index)?.clone(),
                         windows: self.windows.clone(),
                     })
@@ -611,7 +649,7 @@ impl Berth {
         };
         dock.stop_listening();
         match self.config.dock.actions.action_for(gesture) {
-            Action::Menu => self.open_menu(at, press.index),
+            Action::Menu => self.open_menu(at, press.index, press.serial),
             action => {
                 for effect in effects(action, &press.item, &press.windows) {
                     self.perform(effect);

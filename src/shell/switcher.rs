@@ -129,7 +129,7 @@ impl Berth {
             view.invalidate();
             return;
         }
-        let Some(session) = Session::begin(&self.windows, direction) else {
+        let Some(session) = Session::begin(&self.windows, direction, self.config.switcher.windows) else {
             return;
         };
 

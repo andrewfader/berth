@@ -112,7 +112,7 @@ mod tests {
 
     fn menu_for(app: &str, pinned: &[&str], windows: &Windows, pins_are_editable: bool) -> Vec<Entry> {
         let pinned: Vec<AppId> = pinned.iter().map(|app| AppId::new(*app)).collect();
-        let items = dock_items(&pinned, windows);
+        let items = dock_items(&pinned, windows, None);
         let item = items.iter().find(|item| item.app.as_str() == app).unwrap();
         entries(item, windows, pins_are_editable)
     }

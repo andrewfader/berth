@@ -31,13 +31,18 @@ pub enum Button {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Escape = 1,
+    One = 2,
+    Two = 3,
     Tab = 15,
     Enter = 28,
     Control = 29,
     Shift = 42,
     Alt = 56,
+    Up = 103,
     Left = 105,
     Right = 106,
+    Down = 108,
+    Super = 125,
 }
 
 impl Key {
@@ -46,6 +51,7 @@ impl Key {
             Key::Shift => 1,
             Key::Control => 4,
             Key::Alt => 8,
+            Key::Super => 64,
             _ => 0,
         }
     }

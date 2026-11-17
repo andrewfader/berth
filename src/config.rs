@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -8,7 +9,10 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::dock::actions::{Action, Gesture};
+use crate::dock::items::Shown;
+use crate::dock::layout::Edge;
 use crate::dock::reveal::Autohide;
+use crate::switcher::session::Listed;
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -21,24 +25,36 @@ pub struct Config {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Dock {
+    pub edge: Edge,
     pub icon_size: u32,
     pub magnification: f32,
     pub opacity: f32,
     pub blur: bool,
     pub autohide: Autohide,
     pub pinned: Option<Vec<String>>,
+    pub windows: Shown,
+    pub monitor: BTreeMap<String, Monitor>,
     pub actions: Gestures,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Monitor {
+    pub pinned: Option<Vec<String>>,
 }
 
 impl Default for Dock {
     fn default() -> Self {
         Self {
+            edge: Edge::Bottom,
             icon_size: 48,
             magnification: 1.6,
             opacity: 0.55,
             blur: true,
             autohide: Autohide::Intelligent,
             pinned: None,
+            windows: Shown::All,
+            monitor: BTreeMap::new(),
             actions: Gestures::default(),
         }
     }
@@ -93,6 +109,7 @@ impl Gestures {
 pub struct Switcher {
     pub opacity: f32,
     pub blur: bool,
+    pub windows: Listed,
 }
 
 impl Default for Switcher {
@@ -100,6 +117,7 @@ impl Default for Switcher {
         Self {
             opacity: 0.45,
             blur: true,
+            windows: Listed::All,
         }
     }
 }
@@ -261,6 +279,7 @@ mod tests {
             opacity = 0.3
             blur = false
             autohide = "always"
+            edge = "left"
             pinned = ["firefox", "org.gnome.Nautilus"]
             "#,
         )
@@ -271,6 +290,7 @@ mod tests {
         assert_eq!(config.dock.opacity, 0.3);
         assert!(!config.dock.blur);
         assert_eq!(config.dock.autohide, Autohide::Always);
+        assert_eq!(config.dock.edge, Edge::Left);
         assert_eq!(config.dock.pinned.unwrap(), ["firefox", "org.gnome.Nautilus"]);
     }
 
@@ -352,6 +372,25 @@ mod tests {
     }
 
     #[test]
+    fn a_monitor_can_have_its_own_pins_and_show_only_its_own_windows() {
+        let config =
+            Config::parse("[dock]\nwindows = \"this-monitor\"\n[dock.monitor.DP-3]\npinned = [\"mpv\"]\n")
+                .unwrap();
+
+        assert_eq!(config.dock.windows, Shown::ThisMonitor);
+        assert_eq!(config.dock.monitor["DP-3"].pinned.as_deref().unwrap(), ["mpv"]);
+        assert_eq!(Config::default().dock.windows, Shown::All);
+    }
+
+    #[test]
+    fn the_switcher_can_be_limited_to_the_current_workspace() {
+        let config = Config::parse("[switcher]\nwindows = \"this-workspace\"").unwrap();
+
+        assert_eq!(config.switcher.windows, Listed::ThisWorkspace);
+        assert_eq!(Config::default().switcher.windows, Listed::All);
+    }
+
+    #[test]
     fn the_switcher_backdrop_is_configurable() {
         let config = Config::parse("[switcher]\nopacity = 0.8\nblur = false").unwrap();
 
@@ -359,7 +398,8 @@ mod tests {
             config.switcher,
             Switcher {
                 opacity: 0.8,
-                blur: false
+                blur: false,
+                windows: Listed::All,
             }
         );
     }

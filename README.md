@@ -70,12 +70,17 @@ Delete that file to get COSMIC's switcher back.
 
 ```toml
 [dock]
+edge = "bottom"           # "bottom", "top", "left" or "right"
 icon-size = 48            # 16 to 256
 magnification = 1.6       # 1.0 turns the swell off, up to 3.0
 opacity = 0.55            # 0.0 clear to 1.0 solid
 blur = true
 autohide = "intelligent"  # "intelligent", "always" or "never"
+windows = "all"           # "this-monitor": each dock shows only its monitor's windows
 # pinned = ["firefox", "org.gnome.Nautilus"]   # see "Pinned apps" below
+
+# [dock.monitor.DP-3]     # pins for one monitor only, by its output name
+# pinned = ["mpv", "steam"]
 
 [dock.actions]
 click = "toggle"
@@ -94,6 +99,7 @@ launch = "bounce"         # "bounce" or "none": the hop of a starting app's icon
 [switcher]
 opacity = 0.45            # how dark the desktop gets behind the row
 blur = true
+windows = "all"           # "this-workspace": leave out windows on other workspaces
 ```
 
 | Action | On a running app | On an app with no windows |
@@ -120,6 +126,12 @@ Without `pinned` in the file, the dock starts from the COSMIC dock's favorites
 and "Pin to Dock" / "Unpin from Dock" in the menu change it; the result is kept
 in `~/.local/state/berth/pinned`. With `pinned` in the file, the file decides and
 the menu does not offer pinning.
+
+A monitor with its own `[dock.monitor.NAME]` pins always follows the file, and
+its menu does not offer pinning. `cosmic-randr list` shows the output names.
+
+In the menu, the arrow keys move, Enter chooses, and Escape or a click anywhere
+else closes it.
 
 ### Shift-click and Ctrl-click
 
@@ -149,11 +161,8 @@ keyboard, so they need `sway`, `cosmic-comp`, `cosmic-randr`, `grim` and
 
 ## Not done
 
-- The dock sits at the bottom edge only, and every monitor shows the same apps.
-- The menu is pointer-only: no keyboard navigation, and it closes when the
-  pointer leaves it rather than on a click elsewhere.
-- The switcher lists every window, not only those on the current workspace.
-- A dock that still does not fit at the smallest icon size (16) runs off the
-  sides of the monitor.
-- Multi-monitor behavior is tested on sway, because a nested COSMIC has a single
-  output. It has not been run on a real multi-monitor COSMIC session yet.
+- A dock with so many apps that it does not fit even at the smallest icon size
+  (16, without the swell) runs off the ends of the monitor.
+- `windows = "this-monitor"` is covered by unit specs only: the nested COSMIC used
+  for the end-to-end scenarios has one output, and sway, used for the
+  multi-monitor scenarios, does not say which monitor a window is on.

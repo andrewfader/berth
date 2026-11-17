@@ -41,7 +41,8 @@ use cosmic_client_toolkit::sctk::{
 };
 use cosmic_client_toolkit::toplevel_info::{ToplevelInfoHandler, ToplevelInfoState};
 use cosmic_client_toolkit::toplevel_management::{ToplevelManagerHandler, ToplevelManagerState};
-use cosmic_client_toolkit::{delegate_toplevel_info, delegate_toplevel_manager};
+use cosmic_client_toolkit::workspace::{WorkspaceHandler, WorkspaceState};
+use cosmic_client_toolkit::{delegate_toplevel_info, delegate_toplevel_manager, delegate_workspace};
 use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_keyboard::WlKeyboard, wl_output, wl_pointer::WlPointer, wl_seat::WlSeat, wl_shm,
@@ -53,6 +54,7 @@ use wayland_protocols::ext::background_effect::v1::client::{
     ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1,
 };
 use wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
+use wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::State as WorkspaceVisibility;
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
@@ -94,6 +96,7 @@ pub struct Berth {
     layer_shell: LayerShell,
     xdg_shell: XdgShell,
     toplevels: ToplevelInfoState,
+    workspaces: WorkspaceState,
     manager: Option<ToplevelManagerState>,
     screencopy: ScreencopyState,
     extras: Extras,
@@ -179,6 +182,7 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         seats: SeatState::new(&globals, &qh),
         pool: SlotPool::new(1 << 20, &shm)?,
         manager: ToplevelManagerState::try_new(&registry, &qh),
+        workspaces: WorkspaceState::new(&registry, &qh),
         screencopy: ScreencopyState::new(&globals, &qh),
         icons: themed_icons(),
         registry,
@@ -250,20 +254,15 @@ impl Berth {
     }
 
     fn next_deadline(&self) -> Option<Duration> {
-        [
-            self.dock_deadline(),
-            self.menu_deadline(),
-            self.switcher_deadline(),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        [self.dock_deadline(), self.switcher_deadline()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn tick(&mut self) {
         self.settle_docks();
         self.paint_docks();
-        self.settle_menu();
         self.paint_menu();
         self.settle_switcher();
         self.paint_switcher();
@@ -370,6 +369,11 @@ impl Berth {
                 app
             }
         };
+        let on_a_workspace_in_view = info.workspace.iter().any(|workspace| {
+            self.workspaces
+                .workspace_info(workspace)
+                .is_some_and(|known| known.state.contains(WorkspaceVisibility::Active))
+        });
         self.launching.remove(&app);
         self.windows.report(Window {
             id,
@@ -377,6 +381,14 @@ impl Berth {
             title: info.title.clone(),
             active: info.state.contains(&ToplevelState::Activated),
             minimized: info.state.contains(&ToplevelState::Minimized),
+            monitors: info
+                .output
+                .iter()
+                .filter_map(|output| self.outputs.info(output)?.name)
+                .collect(),
+            here: info.workspace.is_empty()
+                || on_a_workspace_in_view
+                || info.state.contains(&ToplevelState::Sticky),
         });
         self.windows_changed();
     }
@@ -431,6 +443,18 @@ impl ToplevelInfoHandler for Berth {
             self.switcher = view.without(id);
         }
         self.windows_changed();
+    }
+}
+
+impl WorkspaceHandler for Berth {
+    fn workspace_state(&mut self) -> &mut WorkspaceState {
+        &mut self.workspaces
+    }
+
+    fn done(&mut self) {
+        for toplevel in self.ids.keys().cloned().collect::<Vec<_>>() {
+            self.sync_window(&toplevel);
+        }
     }
 }
 
@@ -604,20 +628,27 @@ impl KeyboardHandler for Berth {
         _: &[u32],
         _: &[Keysym],
     ) {
-        match self.dock_at(surface) {
-            Some(_) => self.dock_focused(surface),
-            None => self.switcher_focused(),
+        if self.dock_at(surface).is_some() {
+            self.dock_focused(surface);
+        } else if !self.menu.as_ref().is_some_and(|menu| menu.is_on(surface)) {
+            self.switcher_focused();
         }
     }
 
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: &WlSurface, _: u32) {}
 
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, event: KeyEvent) {
-        self.switcher_key(event.keysym);
+        match self.menu {
+            Some(_) => self.menu_key(event.keysym),
+            None => self.switcher_key(event.keysym),
+        }
     }
 
     fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, event: KeyEvent) {
-        self.switcher_key(event.keysym);
+        match self.menu {
+            Some(_) => self.menu_key(event.keysym),
+            None => self.switcher_key(event.keysym),
+        }
     }
 
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, _: KeyEvent) {}
@@ -720,6 +751,7 @@ delegate_xdg_popup!(Berth);
 delegate_registry!(Berth);
 delegate_toplevel_info!(Berth);
 delegate_toplevel_manager!(Berth);
+delegate_workspace!(Berth);
 delegate_noop!(Berth: WpViewporter);
 delegate_noop!(Berth: WpViewport);
 delegate_noop!(Berth: WpFractionalScaleManagerV1);

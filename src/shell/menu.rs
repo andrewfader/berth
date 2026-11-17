@@ -1,6 +1,6 @@
 use std::rc::Rc;
-use std::time::Duration;
 
+use cosmic_client_toolkit::sctk::seat::keyboard::Keysym;
 use cosmic_client_toolkit::sctk::seat::pointer::{BTN_LEFT, PointerEvent, PointerEventKind};
 use cosmic_client_toolkit::sctk::shell::xdg::XdgPositioner;
 use cosmic_client_toolkit::sctk::shell::xdg::popup::Popup;
@@ -11,11 +11,11 @@ use wayland_protocols::xdg::shell::client::xdg_positioner::{Anchor, ConstraintAd
 use super::Berth;
 use super::canvas::{Canvas, Medium};
 use super::dock::DockView;
+use crate::dock::layout::Edge;
 use crate::dock::menu::{self, Entry, Scene};
 
 const GAP: i32 = 8;
 const TEXT: f32 = 13.0;
-const LINGER: Duration = Duration::from_millis(500);
 
 pub struct MenuView {
     popup: Popup,
@@ -26,8 +26,6 @@ pub struct MenuView {
     size: (u32, u32),
     configured: bool,
     pointed: Option<usize>,
-    hovered: bool,
-    abandoned_at: Option<Duration>,
 }
 
 impl MenuView {
@@ -41,7 +39,7 @@ impl MenuView {
 }
 
 impl Berth {
-    pub(super) fn open_menu(&mut self, at: usize, index: usize) {
+    pub(super) fn open_menu(&mut self, at: usize, index: usize, pressed: u32) {
         self.close_menu();
         let Some(dock) = self.docks.get(at) else {
             return;
@@ -49,7 +47,8 @@ impl Berth {
         let (Some(item), Some(icon)) = (dock.item(index), dock.resting_icon(index)) else {
             return;
         };
-        let entries = menu::entries(item, &self.windows, self.pins.are_editable());
+        let pins_are_editable = self.pins.are_editable() && !dock.decides_its_own_pins();
+        let entries = menu::entries(item, &self.windows, pins_are_editable);
         let widest = entries
             .iter()
             .filter_map(|entry| self.typesetter.line(&entry.label, TEXT, menu::WIDEST))
@@ -67,16 +66,25 @@ impl Berth {
             icon.width as i32,
             icon.height as i32,
         );
-        positioner.set_anchor(Anchor::Top);
-        positioner.set_gravity(Gravity::Top);
-        positioner.set_offset(0, -GAP);
-        positioner.set_constraint_adjustment(ConstraintAdjustment::SlideX);
+        let (towards, (off_x, off_y)) = match dock.edge() {
+            Edge::Bottom => ((Anchor::Top, Gravity::Top), (0, -GAP)),
+            Edge::Top => ((Anchor::Bottom, Gravity::Bottom), (0, GAP)),
+            Edge::Left => ((Anchor::Right, Gravity::Right), (GAP, 0)),
+            Edge::Right => ((Anchor::Left, Gravity::Left), (-GAP, 0)),
+        };
+        positioner.set_anchor(towards.0);
+        positioner.set_gravity(towards.1);
+        positioner.set_offset(off_x, off_y);
+        positioner.set_constraint_adjustment(ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY);
         let surface = self.compositor.create_surface(&self.qh);
         let Ok(popup) = Popup::from_surface(None, &positioner, &self.qh, surface.clone(), &self.xdg_shell)
         else {
             return;
         };
         dock.layer().get_popup(popup.xdg_popup());
+        if let Some(seat) = &self.seat {
+            popup.xdg_popup().grab(seat, pressed);
+        }
         surface.commit();
 
         self.docks[at].hold_open();
@@ -89,8 +97,6 @@ impl Berth {
             size: (wide as u32, tall as u32),
             configured: false,
             pointed: None,
-            hovered: false,
-            abandoned_at: None,
         });
     }
 
@@ -125,30 +131,6 @@ impl Berth {
             && menu.canvas.rescale(scale120)
         {
             menu.labels.fill(None);
-        }
-    }
-
-    pub(super) fn menu_deadline(&self) -> Option<Duration> {
-        self.menu.as_ref()?.abandoned_at.map(|since| since + LINGER)
-    }
-
-    pub(super) fn settle_menu(&mut self) {
-        let now = self.now();
-        let Some(menu) = &mut self.menu else {
-            return;
-        };
-        let attended = menu.hovered
-            || self
-                .docks
-                .iter()
-                .any(|dock| menu.belongs_to(dock) && dock.is_hovered());
-        menu.abandoned_at = match (attended, menu.abandoned_at) {
-            (true, _) => None,
-            (false, None) => Some(now),
-            (false, since) => since,
-        };
-        if menu.abandoned_at.is_some_and(|since| now >= since + LINGER) {
-            self.close_menu();
         }
     }
 
@@ -193,6 +175,30 @@ impl Berth {
         );
     }
 
+    pub(super) fn menu_key(&mut self, key: Keysym) {
+        let Some(menu) = &mut self.menu else {
+            return;
+        };
+        let rows = menu.entries.len();
+        menu.canvas.invalidate();
+        match key {
+            Keysym::Down | Keysym::Tab => menu.pointed = Some(menu.pointed.map_or(0, |row| (row + 1) % rows)),
+            Keysym::Up | Keysym::ISO_Left_Tab => {
+                menu.pointed = Some(menu.pointed.map_or(rows - 1, |row| (row + rows - 1) % rows))
+            }
+            Keysym::Escape => self.close_menu(),
+            Keysym::Return | Keysym::KP_Enter | Keysym::space => {
+                if let Some(entry) = menu.pointed.and_then(|row| menu.entries.get(row)).cloned() {
+                    self.close_menu();
+                    for effect in entry.effects {
+                        self.perform(effect);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn menu_pointer(&mut self, event: &PointerEvent) {
         let Some(menu) = &mut self.menu else {
             return;
@@ -201,11 +207,9 @@ impl Berth {
         menu.canvas.invalidate();
         match event.kind {
             PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                menu.hovered = true;
                 menu.pointed = row;
             }
             PointerEventKind::Leave { .. } => {
-                menu.hovered = false;
                 menu.pointed = None;
             }
             PointerEventKind::Release { button: BTN_LEFT, .. } => {

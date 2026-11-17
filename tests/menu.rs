@@ -7,7 +7,10 @@ use support::*;
 const EDITABLE: &str = "";
 
 fn menu_is_showing(desktop: &Desktop, above: berth::geometry::Rect, rows: usize) -> bool {
-    desktop.screenshot().brightest_in(menu_area(above, rows)) > 600
+    let whole = menu_area(above, rows);
+    let clear_of_name_labels =
+        berth::geometry::Rect::new(whole.x, whole.y, whole.width / 2.0 - 10.0, whole.height);
+    desktop.screenshot().brightest_in(clear_of_name_labels) > 600
 }
 
 fn choose(desktop: &mut Desktop, above: berth::geometry::Rect, rows: usize, row: usize) {
@@ -120,22 +123,22 @@ fn pinning_is_not_offered_when_the_configuration_file_lists_the_pins() {
 }
 
 #[test]
-fn the_menu_goes_away_when_the_pointer_wanders_off() {
+fn the_menu_waits_while_the_pointer_wanders_and_closes_on_a_click_elsewhere() {
     let mut desktop = Desktop::with_dock(EDITABLE);
     eventually("the dock is drawn", || desktop.screenshot().count(RED) > 0);
     desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Right);
     eventually("the menu is open", || menu_is_showing(&desktop, icon(0), 2));
 
-    let (x, y) = menu_row(icon(0), 2, 0);
-    desktop.pointer(x, y);
+    desktop.pointer(300.0, 300.0);
     never(
-        "the menu must stay under the pointer",
-        Duration::from_secs(1),
+        "the menu must wait for a decision",
+        Duration::from_millis(1200),
         || !menu_is_showing(&desktop, icon(0), 2),
     );
 
-    desktop.pointer(300.0, 300.0);
+    desktop.click(Button::Left);
     eventually("the menu has closed", || !menu_is_showing(&desktop, icon(0), 2));
+    assert_eq!(desktop.windows(), []);
 }
 
 #[test]
@@ -158,4 +161,38 @@ fn a_dock_hidden_under_a_window_stays_out_while_its_menu_is_open() {
         Duration::from_secs(1),
         || desktop.screenshot().count(GREEN) == 0,
     );
+}
+
+#[test]
+fn the_menu_can_be_worked_from_the_keyboard() {
+    let mut desktop = Desktop::with_dock(EDITABLE);
+    desktop.open("red", "red window", "ff0000", "500x300");
+    desktop.open("green", "green window", "00ff00", "500x300");
+    desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Right);
+    eventually("the menu is open", || menu_is_showing(&desktop, icon(0), 4));
+    desktop.pointer(icon(2).center_x(), icon(2).center_y());
+
+    desktop.tap(Key::Down);
+    desktop.tap(Key::Down);
+    desktop.tap(Key::Up);
+    desktop.tap(Key::Enter);
+
+    eventually("enter chose the first entry, the red window", || {
+        desktop.focused().as_deref() == Some("red window")
+    });
+    eventually("the menu is gone", || !menu_is_showing(&desktop, icon(0), 4));
+}
+
+#[test]
+fn escape_closes_the_menu_and_changes_nothing() {
+    let mut desktop = Desktop::with_dock(EDITABLE);
+    eventually("the dock is drawn", || desktop.screenshot().count(RED) > 0);
+    desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Right);
+    eventually("the menu is open", || menu_is_showing(&desktop, icon(0), 2));
+
+    desktop.pointer(icon(2).center_x(), icon(2).center_y());
+    desktop.tap(Key::Escape);
+
+    eventually("the menu is gone", || !menu_is_showing(&desktop, icon(0), 2));
+    assert_eq!(desktop.windows(), []);
 }

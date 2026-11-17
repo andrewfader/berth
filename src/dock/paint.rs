@@ -1,6 +1,6 @@
 use tiny_skia::{Pixmap, PixmapMut};
 
-use super::layout::Layout;
+use super::layout::{Edge, Layout};
 use crate::geometry::Rect;
 use crate::paint::{Finish, fill_rounded, picture, stroke_rounded, tint};
 
@@ -17,6 +17,7 @@ pub struct Scene<'a> {
     pub layout: &'a Layout,
     pub tiles: &'a [Tile<'a>],
     pub label: Option<(usize, &'a Pixmap)>,
+    pub edge: Edge,
     pub opacity: f32,
     pub scale: f32,
 }
@@ -40,23 +41,25 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
         scale,
     );
 
+    let panel = layout.panel;
     for (tile, place) in scene.tiles.iter().zip(&layout.icons) {
+        let (hop_x, hop_y) = scene.edge.inward(tile.lift);
         picture(
             canvas,
             tile.icon,
-            place.moved(0.0, -tile.lift),
+            place.moved(hop_x, hop_y),
             0.0,
             Finish::Fine,
             scale,
         );
         if tile.running {
-            let wide = if tile.focused { 14.0 } else { 4.0 };
-            let mark = Rect::new(
-                place.center_x() - wide / 2.0,
-                layout.panel.bottom() - 6.0,
-                wide,
-                4.0,
-            );
+            let long = if tile.focused { 14.0 } else { 4.0 };
+            let mark = match scene.edge {
+                Edge::Bottom => Rect::new(place.center_x() - long / 2.0, panel.bottom() - 6.0, long, 4.0),
+                Edge::Top => Rect::new(place.center_x() - long / 2.0, panel.y + 2.0, long, 4.0),
+                Edge::Left => Rect::new(panel.x + 2.0, place.center_y() - long / 2.0, 4.0, long),
+                Edge::Right => Rect::new(panel.right() - 6.0, place.center_y() - long / 2.0, 4.0, long),
+            };
             fill_rounded(
                 canvas,
                 mark,
@@ -71,11 +74,19 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
         && let Some(place) = layout.icons.get(index)
     {
         let (wide, tall) = (text.width() as f32 / scale, text.height() as f32 / scale);
-        let surface_width = canvas.width() as f32 / scale;
-        let bubble = Rect::new(0.0, (place.y - tall - 10.0).max(0.0), wide + 20.0, tall + 4.0);
-        let bubble = bubble.moved(
-            (place.center_x() - bubble.width / 2.0).clamp(0.0, surface_width - bubble.width),
-            0.0,
+        let (room_x, room_y) = (canvas.width() as f32 / scale, canvas.height() as f32 / scale);
+        let (bubble_wide, bubble_tall) = (wide + 20.0, tall + 4.0);
+        let (x, y) = match scene.edge {
+            Edge::Bottom => (place.center_x() - bubble_wide / 2.0, place.y - bubble_tall - 6.0),
+            Edge::Top => (place.center_x() - bubble_wide / 2.0, place.bottom() + 6.0),
+            Edge::Left => (place.right() + 6.0, place.center_y() - bubble_tall / 2.0),
+            Edge::Right => (place.x - bubble_wide - 6.0, place.center_y() - bubble_tall / 2.0),
+        };
+        let bubble = Rect::new(
+            x.clamp(0.0, (room_x - bubble_wide).max(0.0)),
+            y.clamp(0.0, (room_y - bubble_tall).max(0.0)),
+            bubble_wide,
+            bubble_tall,
         );
         fill_rounded(canvas, bubble, bubble.height / 2.0, &tint(24, 24, 28, 0.9), scale);
         picture(
@@ -131,6 +142,7 @@ mod tests {
                 layout: &layout,
                 tiles: &tiles,
                 label: label.map(|index| (index, &text)),
+                edge: Edge::Bottom,
                 opacity,
                 scale,
             },
@@ -263,6 +275,7 @@ mod tests {
                 layout: &layout,
                 tiles: &tiles,
                 label: None,
+                edge: Edge::Bottom,
                 opacity: 0.5,
                 scale: 1.0,
             },
@@ -272,6 +285,85 @@ mod tests {
         assert_eq!(rgba(&pixmap, place.center_x(), place.y - 10.0), [255, 0, 0, 255]);
         assert_ne!(
             rgba(&pixmap, place.center_x(), place.bottom() - 2.0),
+            [255, 0, 0, 255]
+        );
+    }
+
+    fn upright(edge: Edge, lift: f32, label: bool) -> Painted {
+        let metrics = metrics().along(edge);
+        let lying = metrics.surface(2);
+        let layout = Layout::arrange(&metrics, 2, Pose::RESTING).on(edge, lying);
+        let (width, height) = edge.surface(lying);
+        let (icon, text) = (solid(96, 255, 0, 0), solid(16, 0, 255, 0));
+        let tiles = [true, false].map(|running| Tile {
+            icon: &icon,
+            running,
+            focused: false,
+            lift,
+        });
+        let mut pixmap = Pixmap::new(width as u32, height as u32).unwrap();
+        paint(
+            &mut pixmap.as_mut(),
+            &Scene {
+                layout: &layout,
+                tiles: &tiles,
+                label: label.then_some((0, &text)),
+                edge,
+                opacity: 0.5,
+                scale: 1.0,
+            },
+        );
+        Painted { pixmap, layout }
+    }
+
+    #[test]
+    fn on_a_side_dock_the_running_mark_sits_between_the_icon_and_the_screen_edge() {
+        let left = upright(Edge::Left, 0.0, false);
+        let right = upright(Edge::Right, 0.0, false);
+
+        let (running, idle) = (left.layout.icons[0], left.layout.icons[1]);
+        assert!(rgba(&left.pixmap, left.layout.panel.x + 4.0, running.center_y())[0] > 150);
+        assert!(rgba(&left.pixmap, left.layout.panel.x + 4.0, idle.center_y())[0] < 100);
+        let running = right.layout.icons[0];
+        assert!(
+            rgba(
+                &right.pixmap,
+                right.layout.panel.right() - 4.0,
+                running.center_y()
+            )[0] > 150
+        );
+    }
+
+    #[test]
+    fn on_a_side_dock_the_name_is_written_beside_the_icon_towards_the_screen() {
+        let left = upright(Edge::Left, 0.0, true);
+        let right = upright(Edge::Right, 0.0, true);
+
+        let icon = left.layout.icons[0];
+        assert_eq!(
+            rgba(&left.pixmap, icon.right() + 24.0, icon.center_y()),
+            [0, 255, 0, 255]
+        );
+        let icon = right.layout.icons[0];
+        assert_eq!(
+            rgba(&right.pixmap, icon.x - 24.0, icon.center_y()),
+            [0, 255, 0, 255]
+        );
+    }
+
+    #[test]
+    fn a_hopping_icon_always_jumps_away_from_the_screen_edge() {
+        let left = upright(Edge::Left, 12.0, false);
+        let top = upright(Edge::Top, 12.0, false);
+
+        let icon = left.layout.icons[0];
+        assert_eq!(
+            rgba(&left.pixmap, icon.right() + 10.0, icon.center_y()),
+            [255, 0, 0, 255]
+        );
+        let icon = top.layout.icons[0];
+        assert_eq!(
+            rgba(&top.pixmap, icon.center_x(), icon.bottom() + 10.0),
             [255, 0, 0, 255]
         );
     }

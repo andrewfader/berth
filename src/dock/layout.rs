@@ -1,8 +1,58 @@
 use std::f32::consts::FRAC_PI_2;
 
+use serde::Deserialize;
+
 use crate::geometry::Rect;
 
 pub const SMALLEST_ICON: f32 = 16.0;
+const LABEL_ABOVE: f32 = 30.0;
+const LABEL_BESIDE: f32 = 200.0;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Edge {
+    #[default]
+    Bottom,
+    Top,
+    Left,
+    Right,
+}
+
+impl Edge {
+    pub fn is_upright(self) -> bool {
+        matches!(self, Edge::Left | Edge::Right)
+    }
+
+    pub fn surface(self, lying: (f32, f32)) -> (f32, f32) {
+        if self.is_upright() {
+            (lying.1, lying.0)
+        } else {
+            lying
+        }
+    }
+
+    pub fn place(self, rect: Rect, lying: (f32, f32)) -> Rect {
+        match self {
+            Edge::Bottom => rect,
+            Edge::Top => Rect::new(rect.x, lying.1 - rect.bottom(), rect.width, rect.height),
+            Edge::Left => Rect::new(lying.1 - rect.bottom(), rect.x, rect.height, rect.width),
+            Edge::Right => Rect::new(rect.y, rect.x, rect.height, rect.width),
+        }
+    }
+
+    pub fn along(self, x: f32, y: f32) -> f32 {
+        if self.is_upright() { y } else { x }
+    }
+
+    pub fn inward(self, distance: f32) -> (f32, f32) {
+        match self {
+            Edge::Bottom => (0.0, -distance),
+            Edge::Top => (0.0, distance),
+            Edge::Left => (distance, 0.0),
+            Edge::Right => (-distance, 0.0),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
@@ -24,7 +74,7 @@ impl Metrics {
             lift: 6.0,
             magnification,
             reach: icon * 2.5,
-            label: 30.0,
+            label: LABEL_ABOVE,
         }
     }
 
@@ -33,7 +83,21 @@ impl Metrics {
         while metrics.surface(items).0 > room && metrics.icon > SMALLEST_ICON {
             metrics = Self::for_icon((metrics.icon - 2.0).max(SMALLEST_ICON), magnification);
         }
+        if metrics.surface(items).0 > room {
+            metrics = Self::for_icon(SMALLEST_ICON, 1.0);
+        }
         metrics
+    }
+
+    pub fn along(self, edge: Edge) -> Self {
+        Self {
+            label: if edge.is_upright() {
+                LABEL_BESIDE
+            } else {
+                LABEL_ABOVE
+            },
+            ..self
+        }
     }
 
     pub fn surface(&self, items: usize) -> (f32, f32) {
@@ -146,6 +210,13 @@ impl Layout {
         );
 
         Self { icons, panel }
+    }
+
+    pub fn on(&self, edge: Edge, lying: (f32, f32)) -> Self {
+        Self {
+            icons: self.icons.iter().map(|icon| edge.place(*icon, lying)).collect(),
+            panel: edge.place(self.panel, lying),
+        }
     }
 
     pub fn item_at(metrics: &Metrics, items: usize, x: f32) -> Option<usize> {
@@ -347,6 +418,81 @@ mod tests {
     #[test]
     fn icons_never_shrink_below_a_size_that_can_still_be_hit() {
         assert_eq!(Metrics::fitted(48.0, 1.5, 500, 800.0).icon, SMALLEST_ICON);
+    }
+
+    #[test]
+    fn a_dock_still_too_long_at_the_smallest_size_gives_up_its_swell_to_gain_room() {
+        let smallest_swelling = Metrics::for_icon(SMALLEST_ICON, 1.5).surface(40).0;
+
+        let squeezed = Metrics::fitted(48.0, 1.5, 40, smallest_swelling - 1.0);
+
+        assert_eq!((squeezed.icon, squeezed.magnification), (SMALLEST_ICON, 1.0));
+        assert!(squeezed.surface(40).0 < smallest_swelling);
+    }
+
+    fn placed(edge: Edge) -> (Layout, (f32, f32)) {
+        let lying = metrics().surface(3);
+        (resting(3).on(edge, lying), edge.surface(lying))
+    }
+
+    #[test]
+    fn at_the_top_the_panel_hugs_the_upper_edge_and_icons_keep_their_order() {
+        let ((top, _), (bottom, (_, height))) = (placed(Edge::Top), placed(Edge::Bottom));
+
+        assert_eq!(top.panel.y, height - bottom.panel.bottom());
+        assert!(top.panel.y < 10.0);
+        assert!(top.icons[0].x < top.icons[1].x && top.icons[1].x < top.icons[2].x);
+        assert_eq!(top.icons[0].x, bottom.icons[0].x);
+    }
+
+    #[test]
+    fn at_the_left_the_dock_stands_upright_against_the_left_edge() {
+        let (left, (width, height)) = placed(Edge::Left);
+
+        assert!(height > width);
+        assert!(left.panel.x < 10.0 && left.panel.height > left.panel.width);
+        assert!(left.icons[0].y < left.icons[1].y && left.icons[1].y < left.icons[2].y);
+        assert!(
+            left.icons
+                .iter()
+                .all(|icon| icon.x > left.panel.x && icon.right() < left.panel.right())
+        );
+    }
+
+    #[test]
+    fn at_the_right_the_dock_stands_upright_against_the_right_edge() {
+        let (right, (width, _)) = placed(Edge::Right);
+
+        assert!(width - right.panel.right() < 10.0 && right.panel.height > right.panel.width);
+        assert!(right.icons[0].y < right.icons[1].y);
+        assert!(
+            right
+                .icons
+                .iter()
+                .all(|icon| icon.width == 48.0 && icon.height == 48.0)
+        );
+    }
+
+    #[test]
+    fn an_upright_dock_follows_the_pointer_up_and_down() {
+        assert_eq!(Edge::Left.along(3.0, 250.0), 250.0);
+        assert_eq!(Edge::Bottom.along(3.0, 250.0), 3.0);
+    }
+
+    #[test]
+    fn an_upright_dock_leaves_room_beside_it_for_the_name_of_an_app() {
+        let beside = metrics().along(Edge::Right);
+
+        assert!(beside.surface(3).1 > metrics().surface(3).1 + 100.0);
+        assert_eq!(metrics().along(Edge::Top), metrics());
+    }
+
+    #[test]
+    fn inward_always_points_away_from_the_screen_edge() {
+        assert_eq!(Edge::Bottom.inward(5.0), (0.0, -5.0));
+        assert_eq!(Edge::Top.inward(5.0), (0.0, 5.0));
+        assert_eq!(Edge::Left.inward(5.0), (5.0, 0.0));
+        assert_eq!(Edge::Right.inward(5.0), (-5.0, 0.0));
     }
 
     #[test]

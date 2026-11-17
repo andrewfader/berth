@@ -21,6 +21,14 @@ pub struct Window {
     pub title: String,
     pub active: bool,
     pub minimized: bool,
+    pub monitors: Vec<String>,
+    pub here: bool,
+}
+
+impl Window {
+    pub fn is_on(&self, monitor: &str) -> bool {
+        self.monitors.is_empty() || self.monitors.iter().any(|name| name == monitor)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -94,6 +102,22 @@ pub mod fixtures {
             title: format!("{app} {id}"),
             active: false,
             minimized: false,
+            monitors: Vec::new(),
+            here: true,
+        }
+    }
+
+    pub fn on_monitor(monitor: &str, window: Window) -> Window {
+        Window {
+            monitors: vec![monitor.to_owned()],
+            ..window
+        }
+    }
+
+    pub fn elsewhere(window: Window) -> Window {
+        Window {
+            here: false,
+            ..window
         }
     }
 

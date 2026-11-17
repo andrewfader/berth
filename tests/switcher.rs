@@ -229,3 +229,59 @@ fn on_a_dense_display_the_switcher_fills_the_same_part_of_the_screen() {
         desktop.focused().as_deref() == Some("green window")
     });
 }
+
+fn green_sent_to_the_second_workspace(listing: &str) -> Desktop {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}{listing}"));
+    desktop.open("red", "red window", "ff0000", "500x300");
+    desktop.open("blue", "blue window", "0000ff", "500x300");
+    desktop.open("green", "green window", "00ff00", "500x300");
+    desktop.press(Key::Super);
+    desktop.press(Key::Shift);
+    desktop.tap(Key::Two);
+    desktop.release(Key::Shift);
+    desktop.tap(Key::One);
+    desktop.release(Key::Super);
+    eventually("a window of the first workspace has focus again", || {
+        desktop.focused().is_some_and(|title| title != "green window")
+    });
+    desktop
+}
+
+fn colours_offered_over_three_tabs(desktop: &mut Desktop) -> Vec<[u8; 3]> {
+    let mut seen = Vec::new();
+    desktop.press(Key::Alt);
+    for _ in 0..3 {
+        desktop.tap(Key::Tab);
+        eventually("a window is presented", || {
+            [RED, GREEN, BLUE].iter().any(|colour| on_stage(desktop, *colour))
+        });
+        std::thread::sleep(Duration::from_millis(400));
+        seen.extend(
+            [RED, GREEN, BLUE]
+                .into_iter()
+                .filter(|colour| on_stage(desktop, *colour)),
+        );
+    }
+    desktop.tap(Key::Escape);
+    desktop.release(Key::Alt);
+    seen
+}
+
+#[test]
+fn limited_to_this_workspace_the_switcher_leaves_out_windows_on_another() {
+    let mut desktop = green_sent_to_the_second_workspace("[switcher]\nwindows = \"this-workspace\"\n");
+
+    let offered = colours_offered_over_three_tabs(&mut desktop);
+
+    assert!(!offered.contains(&GREEN), "{offered:?}");
+    assert!(offered.contains(&RED) && offered.contains(&BLUE), "{offered:?}");
+}
+
+#[test]
+fn by_default_the_switcher_reaches_windows_on_every_workspace() {
+    let mut desktop = green_sent_to_the_second_workspace("");
+
+    let offered = colours_offered_over_three_tabs(&mut desktop);
+
+    assert!(offered.contains(&GREEN), "{offered:?}");
+}

@@ -52,8 +52,15 @@ Never skip, delete or weaken a scenario to get there.
 - A nested COSMIC has one output. Scenarios about several monitors run berth
   straight on headless sway (`Desktop::on_sway_with_monitors`), which has no
   COSMIC protocols: no window states, no activation.
-- The menu is an xdg popup without a grab, so it never takes the keyboard. It
-  closes itself when the pointer has left both it and its dock.
+- The menu is an xdg popup that grabs with the serial of the button press that
+  opened it, although it opens on the release. COSMIC accepts that, gives the
+  popup the keyboard and dismisses it on a click elsewhere.
+- A hovered icon shows its name where a menu would be. Scenarios that look for
+  the menu sample only its left half and park the pointer on an icon to its
+  right.
+- The dock is laid out lying along the bottom edge; `Edge::place` turns that into
+  the other three edges. Do region and hit-test arithmetic in the lying layout
+  and place the result.
 - The event loop takes SIGTERM and SIGINT through a signalfd, which blocks them
   for the process. A child inherits that mask, so `apps::launch` clears it
   before exec. Any new way of starting a program must do the same.
