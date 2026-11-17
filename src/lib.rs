@@ -1,0 +1,11 @@
+pub mod animation;
+pub mod apps;
+pub mod config;
+pub mod dock;
+pub mod geometry;
+pub mod icons;
+pub mod ipc;
+pub mod paint;
+pub mod switcher;
+pub mod text;
+pub mod windows;
