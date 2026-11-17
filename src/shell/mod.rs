@@ -374,6 +374,8 @@ impl Berth {
                 .workspace_info(workspace)
                 .is_some_and(|known| known.state.contains(WorkspaceVisibility::Active))
         });
+        let was_in_use = self.windows.get(id).is_some_and(|window| window.active);
+        let still_in_use = info.state.contains(&ToplevelState::Activated);
         self.launching.remove(&app);
         self.windows.report(Window {
             id,
@@ -390,6 +392,10 @@ impl Berth {
                 || on_a_workspace_in_view
                 || info.state.contains(&ToplevelState::Sticky),
         });
+        if was_in_use && !still_in_use {
+            self.thumbnails.refresh(id);
+            self.capture_next();
+        }
         self.windows_changed();
     }
 

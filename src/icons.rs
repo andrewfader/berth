@@ -55,7 +55,21 @@ impl Icons {
     }
 }
 
+const HEAVIEST_FILE: u64 = 8 << 20;
+const LARGEST_SIDE: u32 = 4096;
+
+fn png_is_reasonable(data: &[u8]) -> bool {
+    let side = |at: usize| {
+        data.get(at..at + 4)
+            .map(|bytes| u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    matches!((side(16), side(20)), (Some(wide), Some(tall)) if wide <= LARGEST_SIDE && tall <= LARGEST_SIDE)
+}
+
 pub fn rasterize(path: &Path, size: u32) -> Option<Pixmap> {
+    if fs::metadata(path).ok()?.len() > HEAVIEST_FILE {
+        return None;
+    }
     let data = fs::read(path).ok()?;
     let mut canvas = Pixmap::new(size, size)?;
     if path
@@ -66,7 +80,7 @@ pub fn rasterize(path: &Path, size: u32) -> Option<Pixmap> {
         let fit = size as f32 / tree.size().width().max(tree.size().height());
         resvg::render(&tree, Transform::from_scale(fit, fit), &mut canvas.as_mut());
     } else {
-        let image = Pixmap::decode_png(&data).ok()?;
+        let image = png_is_reasonable(&data).then(|| Pixmap::decode_png(&data).ok())??;
         paint::picture(
             &mut canvas.as_mut(),
             &image,
@@ -158,6 +172,29 @@ mod tests {
         assert!(rasterize(&dir.path().join("absent.png"), 48).is_none());
         assert!(rasterize(&saved(dir.path(), "broken.png", b"not a png"), 48).is_none());
         assert!(rasterize(&saved(dir.path(), "broken.svg", b"<svg"), 48).is_none());
+    }
+
+    #[test]
+    fn an_icon_file_of_absurd_size_is_not_even_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let bloated = saved(
+            dir.path(),
+            "bloated.svg",
+            &vec![b' '; (HEAVIEST_FILE + 1) as usize],
+        );
+
+        assert!(rasterize(&bloated, 48).is_none());
+    }
+
+    #[test]
+    fn a_png_claiming_enormous_dimensions_is_not_decoded() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bomb = solid(8, 255, 0, 0).encode_png().unwrap();
+        bomb[16..20].copy_from_slice(&60_000u32.to_be_bytes());
+        let path = saved(dir.path(), "bomb.png", &bomb);
+
+        assert!(!png_is_reasonable(&bomb));
+        assert!(rasterize(&path, 48).is_none());
     }
 
     #[test]

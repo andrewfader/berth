@@ -67,6 +67,7 @@ pub struct DockView {
     room: f32,
     metrics: Metrics,
     items: Vec<DockItem>,
+    look: Vec<(bool, bool, bool)>,
     faces: Vec<Face>,
     size: (u32, u32),
     configured: bool,
@@ -239,6 +240,7 @@ impl Berth {
             overlap: None,
             metrics,
             items: Vec::new(),
+            look: Vec::new(),
             faces: Vec::new(),
             size: (0, 0),
             configured: false,
@@ -317,11 +319,25 @@ impl Berth {
                     })
                     .collect();
             }
+            let look: Vec<(bool, bool, bool)> = items
+                .iter()
+                .map(|item| {
+                    (
+                        item.is_running(),
+                        item.active_window(&self.windows).is_some(),
+                        self.launching.contains_key(&item.app),
+                    )
+                })
+                .collect();
+            let looks_the_same = same_apps && look == dock.look;
             dock.items = items;
+            dock.look = look;
             dock.fit(wanted_icon, magnification);
             let obstructed = dock.is_obstructed();
             dock.reveal.obstruction_changed(obstructed, now);
-            dock.canvas.invalidate();
+            if !looks_the_same || !dock.configured {
+                dock.canvas.invalidate();
+            }
         }
     }
 

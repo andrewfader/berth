@@ -41,4 +41,24 @@ jobs:
           sway cosmic-comp cosmic-randr grim dbus mesa libxkbcommon wayland ttf-dejavu procps-ng
       - uses: actions/checkout@v5
       - run: useradd --create-home ci && chown -R ci .
-      - run: sudo -u ci --preserve-env=WLR_RENDERER,LIBGL_ALWAYS_SOFTWARE,CARGO_TERM_COLOR cargo test --locked
+      - name: cargo test
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo -u ci --preserve-env=WLR_RENDERER,LIBGL_ALWAYS_SOFTWARE,CARGO_TERM_COLOR \
+            env HOME=/home/ci CARGO_TERM_COLOR=never cargo test --locked 2>&1 | tee test.log
+      - name: Say why it failed
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "panicked|gave up|never rendered|needed|error|FAILED|test result" test.log | tail -40 > why.log || true
+          tail -15 test.log >> why.log
+          echo "::error title=cargo test::$(sed 's/%/%25/g' why.log | awk '{printf "%s%%0A", $0}')"
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

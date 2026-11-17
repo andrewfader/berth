@@ -9,6 +9,7 @@ publish = false
 
 [profile.release]
 lto = "thin"
+panic = "abort"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -21,7 +22,7 @@ env_logger = "0.11.11"
 freedesktop-desktop-entry = "0.8.4"
 freedesktop-icons = "0.4.0"
 log = "0.4.35"
-nix = { version = "0.31.3", default-features = false, features = ["signal"] }
+nix = { version = "0.31.3", default-features = false, features = ["signal", "socket", "user"] }
 resvg = { version = "0.50.0", default-features = false, features = ["raster-images"] }
 ron = "0.12.2"
 serde = { version = "1.0.229", features = ["derive"] }

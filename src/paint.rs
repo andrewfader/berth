@@ -73,6 +73,18 @@ pub enum Finish {
 }
 
 pub fn picture(canvas: &mut PixmapMut, image: &Pixmap, into: Rect, radius: f32, finish: Finish, scale: f32) {
+    picture_part(canvas, image, into, into, radius, finish, scale);
+}
+
+pub fn picture_part(
+    canvas: &mut PixmapMut,
+    image: &Pixmap,
+    into: Rect,
+    part: Rect,
+    radius: f32,
+    finish: Finish,
+    scale: f32,
+) {
     let quality = match finish {
         Finish::Draft => FilterQuality::Nearest,
         Finish::Fine => FilterQuality::Bilinear,
@@ -86,7 +98,7 @@ pub fn picture(canvas: &mut PixmapMut, image: &Pixmap, into: Rect, radius: f32, 
         anti_alias: true,
         ..Paint::default()
     };
-    fill_rounded(canvas, into, radius, &paint, scale);
+    fill_rounded(canvas, part, radius, &paint, scale);
 }
 
 pub fn rounded_rows(rect: Rect, radius: f32) -> Vec<(i32, i32, i32, i32)> {
@@ -166,6 +178,28 @@ mod tests {
         assert_eq!(rgba(&pixmap, 118.0, 118.0), [255, 0, 0, 255]);
         assert_eq!(alpha(&pixmap, 18.0, 18.0), 0);
         assert_eq!(alpha(&pixmap, 122.0, 122.0), 0);
+    }
+
+    #[test]
+    fn part_of_a_picture_shows_the_same_pixels_it_would_show_in_the_whole() {
+        let mut halves = Pixmap::new(2, 1).unwrap();
+        halves.pixels_mut()[0] = tiny_skia::ColorU8::from_rgba(255, 0, 0, 255).premultiply();
+        halves.pixels_mut()[1] = tiny_skia::ColorU8::from_rgba(0, 0, 255, 255).premultiply();
+        let frame = Rect::new(0.0, 0.0, 100.0, 20.0);
+        let mut pixmap = Pixmap::new(100, 20).unwrap();
+
+        picture_part(
+            &mut pixmap.as_mut(),
+            &halves,
+            frame,
+            Rect::new(60.0, 0.0, 40.0, 20.0),
+            0.0,
+            Finish::Draft,
+            1.0,
+        );
+
+        assert_eq!(rgba(&pixmap, 80.0, 10.0), [0, 0, 255, 255]);
+        assert_eq!(alpha(&pixmap, 30.0, 10.0), 0);
     }
 
     #[test]

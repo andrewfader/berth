@@ -19,10 +19,11 @@ use crate::paint::Finish;
 use crate::switcher::carousel::{self, Cover};
 use crate::switcher::paint::{Card, Scene, paint, picture_frame};
 use crate::switcher::session::{Direction, Session};
+use crate::switcher::thumbnail::worth_capturing;
 use crate::windows::WindowId;
 
 const GLIDE: Duration = Duration::from_millis(190);
-const HESITATION: Duration = Duration::from_millis(110);
+const HESITATION: Duration = Duration::from_millis(70);
 const BACKDROP_DETAIL: f32 = 0.05;
 const MOTION_DETAIL: f32 = 0.5;
 const DENSE: f32 = 1.5;
@@ -162,8 +163,12 @@ impl Berth {
             })
             .collect();
 
-        self.thumbnails
-            .request(session.candidates(), session.selected_index());
+        self.thumbnails.request(worth_capturing(
+            session.candidates(),
+            session.selected_index(),
+            self.windows.active().map(|window| window.id),
+            |window| self.thumbnails.has(window),
+        ));
         self.switcher = Some(SwitcherView {
             focus: Animated::resting_at(session.selected_index() as f32),
             session,

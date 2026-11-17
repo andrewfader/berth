@@ -2,7 +2,7 @@ use tiny_skia::{Pixmap, PixmapMut};
 
 use super::carousel::Cover;
 use crate::geometry::Rect;
-use crate::paint::{Finish, fill_rounded, picture, stroke_rounded, tint};
+use crate::paint::{Finish, fill_rounded, picture, picture_part, stroke_rounded, tint};
 
 const CORNER: f32 = 10.0;
 const BADGE: f32 = 44.0;
@@ -33,17 +33,40 @@ pub fn picture_frame(card: &Card, frame: Rect) -> Rect {
     Rect::new(frame.center_x() - wide / 2.0, frame.bottom() - tall, wide, tall)
 }
 
+pub fn uncovered(place: Rect, nearer: &[Rect]) -> Option<Rect> {
+    let (mut left, mut right) = (place.x, place.right());
+    for cover in nearer {
+        if cover.y > place.y || cover.bottom() < place.bottom() {
+            continue;
+        }
+        if cover.center_x() > place.center_x() {
+            right = right.min(cover.x + CORNER + 2.0);
+        } else {
+            left = left.max(cover.right() - CORNER - 2.0);
+        }
+    }
+    (right - left >= 1.0).then(|| Rect::new(left, place.y, right - left, place.height))
+}
+
 pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
     let scale = scene.scale;
     let mut floor: f32 = 0.0;
+    let places: Vec<Option<Rect>> = scene
+        .covers
+        .iter()
+        .map(|cover| Some(picture_frame(scene.cards.get(cover.index)?, cover.frame)))
+        .collect();
 
-    for cover in scene.covers {
-        let Some(card) = scene.cards.get(cover.index) else {
+    for (position, cover) in scene.covers.iter().enumerate() {
+        let (Some(card), Some(place)) = (scene.cards.get(cover.index), places[position]) else {
             continue;
         };
-        let place = picture_frame(card, cover.frame);
         let chosen = cover.index == scene.selected;
         floor = floor.max(place.bottom());
+        let in_front: Vec<Rect> = places[position + 1..].iter().flatten().copied().collect();
+        let Some(seen) = uncovered(place, &in_front) else {
+            continue;
+        };
 
         if scene.finish == Finish::Fine {
             for (spread, shade) in [(9.0, 0.05), (5.0, 0.09), (2.0, 0.14)] {
@@ -52,9 +75,9 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
             }
         }
         match card.thumbnail {
-            Some(thumbnail) => picture(canvas, thumbnail, place, CORNER, scene.finish, scale),
+            Some(thumbnail) => picture_part(canvas, thumbnail, place, seen, CORNER, scene.finish, scale),
             None => {
-                fill_rounded(canvas, place, CORNER, &tint(44, 44, 50, 1.0), scale);
+                fill_rounded(canvas, seen, CORNER, &tint(44, 44, 50, 1.0), scale);
                 let side = (place.height * 0.4).min(128.0);
                 let middle = Rect::new(
                     place.center_x() - side / 2.0,
@@ -62,13 +85,15 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
                     side,
                     side,
                 );
-                picture(canvas, card.icon, middle, 0.0, Finish::Fine, scale);
+                if middle.x >= seen.x && middle.right() <= seen.right() {
+                    picture(canvas, card.icon, middle, 0.0, Finish::Fine, scale);
+                }
             }
         }
         if cover.light < 1.0 {
             fill_rounded(
                 canvas,
-                place,
+                seen,
                 CORNER,
                 &tint(0, 0, 0, (1.0 - cover.light) * 0.8),
                 scale,
@@ -93,7 +118,9 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
                 side,
                 side,
             );
-            picture(canvas, card.icon, badge, 0.0, Finish::Fine, scale);
+            if badge.x >= seen.x && badge.right() <= seen.right() {
+                picture(canvas, card.icon, badge, 0.0, Finish::Fine, scale);
+            }
         }
     }
 
@@ -236,6 +263,36 @@ mod tests {
             rgba(&in_motion, front.center_x(), front.center_y()),
             [0, 0, 255, 255]
         );
+    }
+
+    #[test]
+    fn only_the_strip_of_a_window_that_peeks_out_from_behind_the_others_is_worth_painting() {
+        let behind = Rect::new(500.0, 100.0, 400.0, 300.0);
+        let nearer_on_the_left = Rect::new(200.0, 50.0, 500.0, 350.0);
+
+        let seen = uncovered(behind, &[nearer_on_the_left]).unwrap();
+
+        assert_eq!((seen.right(), seen.y, seen.height), (900.0, 100.0, 300.0));
+        assert!(seen.x > 650.0 && seen.x < 700.0);
+    }
+
+    #[test]
+    fn a_window_taller_than_the_one_in_front_of_it_is_painted_whole() {
+        let tall = Rect::new(500.0, 0.0, 400.0, 400.0);
+        let short_in_front = Rect::new(200.0, 200.0, 500.0, 200.0);
+
+        assert_eq!(uncovered(tall, &[short_in_front]), Some(tall));
+    }
+
+    #[test]
+    fn a_window_completely_behind_its_neighbours_is_not_painted_at_all() {
+        let buried = Rect::new(400.0, 100.0, 100.0, 100.0);
+        let (left, right) = (
+            Rect::new(100.0, 50.0, 380.0, 200.0),
+            Rect::new(420.0, 50.0, 380.0, 200.0),
+        );
+
+        assert_eq!(uncovered(buried, &[left, right]), None);
     }
 
     #[test]

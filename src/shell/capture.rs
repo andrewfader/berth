@@ -12,7 +12,7 @@ use wayland_client::protocol::{wl_buffer::WlBuffer, wl_shm};
 use wayland_client::{Connection, QueueHandle, WEnum};
 
 use super::Berth;
-use crate::switcher::thumbnail::{Channels, LONGEST_SIDE, from_capture, shrink};
+use crate::switcher::thumbnail::{Capture, Channels, LONGEST_SIDE, thumbnail};
 use crate::windows::WindowId;
 
 #[derive(Default)]
@@ -41,14 +41,18 @@ impl Thumbnails {
         self.shots.get(&window).map(Rc::as_ref)
     }
 
-    pub fn request(&mut self, windows: &[WindowId], nearest: usize) {
-        let mut by_distance: Vec<(usize, WindowId)> = windows
-            .iter()
-            .enumerate()
-            .map(|(index, window)| (index.abs_diff(nearest), *window))
-            .collect();
-        by_distance.sort();
-        self.waiting = by_distance.into_iter().map(|(_, window)| window).collect();
+    pub fn has(&self, window: WindowId) -> bool {
+        self.shots.contains_key(&window)
+    }
+
+    pub fn request(&mut self, windows: Vec<WindowId>) {
+        self.waiting = windows.into();
+    }
+
+    pub fn refresh(&mut self, window: WindowId) {
+        if !self.waiting.contains(&window) {
+            self.waiting.push_back(window);
+        }
     }
 
     pub fn forget(&mut self, window: WindowId) {
@@ -70,7 +74,7 @@ fn layout_of(formats: &[wl_shm::Format]) -> Option<(wl_shm::Format, Channels, bo
 
 impl Berth {
     pub(super) fn capture_next(&mut self) {
-        while self.thumbnails.shooting.is_none() && self.switcher.is_some() {
+        while self.thumbnails.shooting.is_none() {
             let Some(window) = self.thumbnails.waiting.pop_front() else {
                 return;
             };
@@ -163,12 +167,17 @@ impl ScreencopyHandler for Berth {
     }
 
     fn ready(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &CaptureFrame, _: Frame) {
-        if let Some((window, mut film)) = self.capture_finished()
-            && let Some(shot) = from_capture(film.pool.mmap(), film.size, film.channels, film.opaque)
-        {
-            self.thumbnails
-                .shots
-                .insert(window, Rc::new(shrink(shot, LONGEST_SIDE)));
+        let Some((window, mut film)) = self.capture_finished() else {
+            return;
+        };
+        let capture = Capture {
+            bytes: film.pool.mmap(),
+            size: film.size,
+            channels: film.channels,
+            opaque: film.opaque,
+        };
+        if let Some(shot) = thumbnail(&capture, LONGEST_SIDE) {
+            self.thumbnails.shots.insert(window, Rc::new(shot));
             if let Some(view) = &mut self.switcher {
                 view.invalidate();
             }

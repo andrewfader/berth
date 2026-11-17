@@ -153,6 +153,18 @@ In the switcher, Tab and the arrow keys move, Shift+Tab moves back, Enter or
 releasing the modifier switches, Escape or a click on the backdrop cancels, and
 a click on a window switches to it.
 
+## Security
+
+- berth is controlled through a socket in `$XDG_RUNTIME_DIR` that only your user
+  can open, and it checks that whoever connects is you. The only requests are
+  switch, list windows and reload.
+- Apps are started from their desktop entry without a shell, and berth never
+  logs its environment.
+- Icon files larger than 8 MiB, and PNGs claiming more than 4096 pixels a side,
+  are not decoded; the app gets a lettered tile instead.
+- The release build aborts on a bug instead of limping on; the user service
+  restarts it.
+
 ## Develop
 
 ```sh

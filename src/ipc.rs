@@ -1,11 +1,17 @@
 use std::env;
 use std::fmt;
+use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
+
+use nix::sys::socket::getsockopt;
+use nix::sys::socket::sockopt::PeerCredentials;
+use nix::unistd::getuid;
 
 use crate::switcher::session::Direction;
 
@@ -67,11 +73,12 @@ pub fn listen(socket: &Path) -> io::Result<UnixListener> {
             format!("berth is already running on {}", socket.display()),
         ));
     }
-    match std::fs::remove_file(socket) {
+    match fs::remove_file(socket) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
     let listener = UnixListener::bind(socket)?;
+    fs::set_permissions(socket, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
@@ -88,6 +95,12 @@ fn answer_one(stream: UnixStream, answer: &mut impl FnMut(Request) -> String) ->
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(ATTENTION))?;
     stream.set_write_timeout(Some(ATTENTION))?;
+    if getsockopt(&stream, PeerCredentials)?.uid() != getuid().as_raw() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "a request from another user",
+        ));
+    }
     let mut line = String::new();
     BufReader::new(&stream).take(256).read_line(&mut line)?;
     let reply = match line.parse() {
@@ -165,6 +178,17 @@ mod tests {
         let second = listen(&socket).unwrap_err();
 
         assert_eq!(second.kind(), io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
+    fn only_the_user_running_the_dock_can_reach_its_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("berth.sock");
+        let _listening = listen(&socket).unwrap();
+
+        let mode = fs::metadata(&socket).unwrap().permissions().mode();
+
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

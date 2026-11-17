@@ -64,6 +64,10 @@ Never skip, delete or weaken a scenario to get there.
 - The event loop takes SIGTERM and SIGINT through a signalfd, which blocks them
   for the process. A child inherits that mask, so `apps::launch` clears it
   before exec. Any new way of starting a program must do the same.
+- Window pictures for the switcher are taken when a window loses focus, not when
+  the switcher opens, so opening it costs no capture for windows already seen.
+- `overflow-checks` in the release profile made every painter 1.5 to 1.8 times
+  slower in one measurement taken on a loaded machine; it is left off.
 - `cargo test --test NAME` does not rebuild examples; the harness builds the
   test window itself for that reason.
 - `/tmp` is mounted `noexec` on the machine this was written on. Anything the
