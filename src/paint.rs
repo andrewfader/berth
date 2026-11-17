@@ -66,19 +66,23 @@ pub fn stroke_rounded(
     }
 }
 
-pub fn picture(canvas: &mut PixmapMut, image: &Pixmap, into: Rect, radius: f32, opacity: f32, scale: f32) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finish {
+    Draft,
+    Fine,
+}
+
+pub fn picture(canvas: &mut PixmapMut, image: &Pixmap, into: Rect, radius: f32, finish: Finish, scale: f32) {
+    let quality = match finish {
+        Finish::Draft => FilterQuality::Nearest,
+        Finish::Fine => FilterQuality::Bilinear,
+    };
     let stretch = Transform::from_translate(into.x, into.y).pre_scale(
         into.width / image.width() as f32,
         into.height / image.height() as f32,
     );
     let paint = Paint {
-        shader: Pattern::new(
-            image.as_ref(),
-            SpreadMode::Pad,
-            FilterQuality::Bilinear,
-            opacity,
-            stretch,
-        ),
+        shader: Pattern::new(image.as_ref(), SpreadMode::Pad, quality, 1.0, stretch),
         anti_alias: true,
         ..Paint::default()
     };
@@ -154,7 +158,7 @@ mod tests {
             &solid(16, 255, 0, 0),
             Rect::new(10.0, 10.0, 50.0, 50.0),
             0.0,
-            1.0,
+            Finish::Fine,
             2.0,
         );
 
@@ -162,6 +166,22 @@ mod tests {
         assert_eq!(rgba(&pixmap, 118.0, 118.0), [255, 0, 0, 255]);
         assert_eq!(alpha(&pixmap, 18.0, 18.0), 0);
         assert_eq!(alpha(&pixmap, 122.0, 122.0), 0);
+    }
+
+    #[test]
+    fn a_draft_picture_keeps_hard_pixels_where_a_fine_one_blends_them() {
+        let mut checks = Pixmap::new(2, 1).unwrap();
+        checks.pixels_mut()[0] = tiny_skia::ColorU8::from_rgba(255, 255, 255, 255).premultiply();
+        checks.pixels_mut()[1] = tiny_skia::ColorU8::from_rgba(0, 0, 0, 255).premultiply();
+        let frame = Rect::new(0.0, 0.0, 100.0, 10.0);
+        let (mut draft, mut fine) = (Pixmap::new(100, 10).unwrap(), Pixmap::new(100, 10).unwrap());
+
+        picture(&mut draft.as_mut(), &checks, frame, 0.0, Finish::Draft, 1.0);
+        picture(&mut fine.as_mut(), &checks, frame, 0.0, Finish::Fine, 1.0);
+
+        assert_eq!(rgba(&draft, 45.0, 5.0)[0], 255);
+        assert_eq!(rgba(&draft, 55.0, 5.0)[0], 0);
+        assert!((90..=165).contains(&rgba(&fine, 50.0, 5.0)[0]));
     }
 
     #[test]

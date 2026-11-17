@@ -2,7 +2,7 @@ use tiny_skia::{Pixmap, PixmapMut};
 
 use super::carousel::Cover;
 use crate::geometry::Rect;
-use crate::paint::{fill_rounded, picture, stroke_rounded, tint};
+use crate::paint::{Finish, fill_rounded, picture, stroke_rounded, tint};
 
 const CORNER: f32 = 10.0;
 const BADGE: f32 = 44.0;
@@ -17,6 +17,7 @@ pub struct Scene<'a> {
     pub cards: &'a [Card<'a>],
     pub selected: usize,
     pub title: Option<&'a Pixmap>,
+    pub finish: Finish,
     pub scale: f32,
 }
 
@@ -44,17 +45,14 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
         let chosen = cover.index == scene.selected;
         floor = floor.max(place.bottom());
 
-        for (spread, shade) in [(9.0, 0.05), (5.0, 0.09), (2.0, 0.14)] {
-            fill_rounded(
-                canvas,
-                place.grown(spread).moved(0.0, 3.0),
-                CORNER + spread,
-                &tint(0, 0, 0, shade),
-                scale,
-            );
+        if scene.finish == Finish::Fine {
+            for (spread, shade) in [(9.0, 0.05), (5.0, 0.09), (2.0, 0.14)] {
+                let rim = place.moved(0.0, 3.0);
+                stroke_rounded(canvas, rim, CORNER, 2.0 * spread, &tint(0, 0, 0, shade), scale);
+            }
         }
         match card.thumbnail {
-            Some(thumbnail) => picture(canvas, thumbnail, place, CORNER, 1.0, scale),
+            Some(thumbnail) => picture(canvas, thumbnail, place, CORNER, scene.finish, scale),
             None => {
                 fill_rounded(canvas, place, CORNER, &tint(44, 44, 50, 1.0), scale);
                 let side = (place.height * 0.4).min(128.0);
@@ -64,16 +62,18 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
                     side,
                     side,
                 );
-                picture(canvas, card.icon, middle, 0.0, 1.0, scale);
+                picture(canvas, card.icon, middle, 0.0, Finish::Fine, scale);
             }
         }
-        fill_rounded(
-            canvas,
-            place,
-            CORNER,
-            &tint(0, 0, 0, (1.0 - cover.light) * 0.8),
-            scale,
-        );
+        if cover.light < 1.0 {
+            fill_rounded(
+                canvas,
+                place,
+                CORNER,
+                &tint(0, 0, 0, (1.0 - cover.light) * 0.8),
+                scale,
+            );
+        }
         if chosen {
             stroke_rounded(
                 canvas,
@@ -93,7 +93,7 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
                 side,
                 side,
             );
-            picture(canvas, card.icon, badge, 0.0, 1.0, scale);
+            picture(canvas, card.icon, badge, 0.0, Finish::Fine, scale);
         }
     }
 
@@ -105,7 +105,7 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
             title,
             Rect::new((stage_width - wide) / 2.0, floor + BADGE * 0.6, wide, tall),
             0.0,
-            1.0,
+            Finish::Fine,
             scale,
         );
     }
@@ -132,6 +132,16 @@ mod tests {
         title: Option<&Pixmap>,
         scale: f32,
     ) -> Pixmap {
+        finished(thumbnails, selected, title, Finish::Fine, scale)
+    }
+
+    fn finished(
+        thumbnails: &[Option<&Pixmap>],
+        selected: usize,
+        title: Option<&Pixmap>,
+        finish: Finish,
+        scale: f32,
+    ) -> Pixmap {
         let icon = solid(64, 255, 255, 0);
         let cards: Vec<Card> = thumbnails
             .iter()
@@ -149,6 +159,7 @@ mod tests {
                 cards: &cards,
                 selected,
                 title,
+                finish,
                 scale,
             },
         );
@@ -202,6 +213,29 @@ mod tests {
                 .all(|channel| *channel > 230)
         );
         assert!(rgba(&stage, front.center_x(), front.y - 8.0)[0] < 30);
+    }
+
+    #[test]
+    fn a_soft_shadow_lifts_each_window_off_the_backdrop_once_the_row_is_at_rest() {
+        let blue = screenshot(160, 100, 0, 0, 255);
+        let front = picture_frame(
+            &Card {
+                thumbnail: Some(&blue),
+                icon: &blue,
+            },
+            front_frame(STAGE),
+        );
+        let beside = (front.right() + 7.0, front.center_y());
+
+        let at_rest = finished(&[Some(&blue)], 0, None, Finish::Fine, 1.0);
+        let in_motion = finished(&[Some(&blue)], 0, None, Finish::Draft, 1.0);
+
+        assert!(alpha(&at_rest, beside.0, beside.1) > 0);
+        assert_eq!(alpha(&in_motion, beside.0, beside.1), 0);
+        assert_eq!(
+            rgba(&in_motion, front.center_x(), front.center_y()),
+            [0, 0, 255, 255]
+        );
     }
 
     #[test]

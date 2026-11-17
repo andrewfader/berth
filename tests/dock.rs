@@ -62,6 +62,19 @@ fn clicking_a_pinned_app_starts_it() {
 }
 
 #[test]
+fn an_app_started_from_the_dock_can_be_asked_to_quit_like_any_other() {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Left);
+    eventually("the red app has opened a window", || {
+        desktop.focused().as_deref() == Some("red window")
+    });
+
+    desktop.ask_launched_app_to_quit("red");
+
+    eventually("the red app is gone", || desktop.windows().is_empty());
+}
+
+#[test]
 fn clicking_the_focused_app_minimizes_it_and_clicking_again_brings_it_back() {
     let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
     desktop.open("red", "red window", "ff0000", "500x300");

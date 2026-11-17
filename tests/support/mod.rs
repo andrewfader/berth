@@ -6,7 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, Once};
 use std::thread::sleep;
@@ -34,6 +34,7 @@ pub struct Desktop {
     root: PathBuf,
     session: Vec<Child>,
     opened: Vec<(String, u32)>,
+    dock: Option<Child>,
     host: input::Host,
     _turn: MutexGuard<'static, ()>,
 }
@@ -214,6 +215,7 @@ impl Desktop {
         let mut desktop = Self {
             session: Vec::new(),
             opened: Vec::new(),
+            dock: None,
             host: input::Host::unconnected(),
             root,
             _turn: turn,
@@ -261,8 +263,7 @@ impl Desktop {
 
     pub fn start_dock(&mut self, config: &str) {
         fs::write(self.root.join("cfg/berth/config.toml"), config).unwrap();
-        let dock = self.app(berth()).spawn().unwrap();
-        self.session.push(dock);
+        self.dock = Some(self.app(berth()).spawn().unwrap());
         eventually("the dock answers", || self.run(&["windows"]).status.success());
     }
 
@@ -296,6 +297,28 @@ impl Desktop {
             .status()
             .expect("cosmic-randr is needed to change the test display");
         assert!(rescaled.success());
+    }
+
+    pub fn ask_the_dock_to_stop(&mut self) -> ExitStatus {
+        let mut dock = self.dock.take().expect("a running dock");
+        Command::new("kill")
+            .arg("-TERM")
+            .arg(dock.id().to_string())
+            .status()
+            .unwrap();
+        dock.wait().unwrap()
+    }
+
+    pub fn socket(&self) -> PathBuf {
+        self.root.join("rt").join(format!("berth-{DISPLAY}.sock"))
+    }
+
+    pub fn ask_launched_app_to_quit(&self, app: &str) {
+        let started_by_the_dock = format!("{} {app} ", window_program().display());
+        Command::new("pkill")
+            .args(["-TERM", "-f", &started_by_the_dock])
+            .status()
+            .unwrap();
     }
 
     pub fn kill_window(&mut self, title: &str) {
@@ -455,6 +478,7 @@ impl Desktop {
 
 impl Drop for Desktop {
     fn drop(&mut self) {
+        self.session.extend(self.dock.take());
         for process in self.session.iter_mut().rev() {
             let _ = Command::new("kill")
                 .arg("-TERM")

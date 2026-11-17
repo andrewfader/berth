@@ -27,7 +27,7 @@ enum Towards {
 }
 
 fn main() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,fontdb=error")).init();
     let outcome = match Cli::parse().command {
         None => Config::load(&Config::path())
             .map_err(anyhow::Error::from)

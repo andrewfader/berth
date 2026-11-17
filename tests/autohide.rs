@@ -94,3 +94,45 @@ fn a_dock_that_always_hides_only_appears_at_the_screen_edge() {
 
     eventually("the dock appears under the pointer", || dock_is_visible(&desktop));
 }
+
+fn stripes_seen_through_the_panel(look: &str) -> u32 {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\nmagnification = 1.0\n{look}{PINNED}"));
+    desktop.open("red", "striped window", "ffffff+000000", "maximized");
+    eventually("the dock is hidden", || desktop.screenshot().count(GREEN) == 0);
+    desktop.pointer(panel().center_x(), SCREEN.1 as f32 - 1.0);
+    eventually("the dock is back under the pointer", || dock_is_visible(&desktop));
+    std::thread::sleep(Duration::from_millis(500));
+
+    let shot = desktop.screenshot();
+    let above_the_icons = panel().y + 4.0;
+    let along_the_panel: Vec<u32> = (16..panel().width as u32 - 16)
+        .map(|step| shot.brightness(panel().x + step as f32, above_the_icons))
+        .collect();
+    along_the_panel
+        .windows(2)
+        .map(|pair| pair[0].abs_diff(pair[1]))
+        .max()
+        .unwrap()
+}
+
+#[test]
+fn what_lies_behind_the_dock_is_blurred_unless_blur_is_turned_off() {
+    let blurred = stripes_seen_through_the_panel("");
+    let sharp = stripes_seen_through_the_panel("blur = false\n");
+
+    assert!(
+        sharp > 150,
+        "without blur the stripes keep their hard edges: {sharp}"
+    );
+    assert!(
+        blurred < sharp / 3,
+        "with blur they melt together: {blurred} against {sharp}"
+    );
+}
+
+#[test]
+fn a_solid_dock_hides_what_lies_behind_it() {
+    let seen = stripes_seen_through_the_panel("opacity = 1.0\nblur = false\n");
+
+    assert_eq!(seen, 0);
+}

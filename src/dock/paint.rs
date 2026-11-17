@@ -2,7 +2,7 @@ use tiny_skia::{Pixmap, PixmapMut};
 
 use super::layout::Layout;
 use crate::geometry::Rect;
-use crate::paint::{fill_rounded, picture, stroke_rounded, tint};
+use crate::paint::{Finish, fill_rounded, picture, stroke_rounded, tint};
 
 pub const CORNER: f32 = 14.0;
 
@@ -40,7 +40,7 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
     );
 
     for (tile, place) in scene.tiles.iter().zip(&layout.icons) {
-        picture(canvas, tile.icon, *place, 0.0, 1.0, scale);
+        picture(canvas, tile.icon, *place, 0.0, Finish::Fine, scale);
         if tile.running {
             let wide = if tile.focused { 14.0 } else { 4.0 };
             let mark = Rect::new(
@@ -75,7 +75,7 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
             text,
             Rect::new(bubble.x + 10.0, bubble.y + 2.0, wide, tall),
             0.0,
-            1.0,
+            Finish::Fine,
             scale,
         );
     }

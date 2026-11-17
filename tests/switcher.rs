@@ -107,6 +107,46 @@ fn escape_leaves_everything_as_it_was() {
 }
 
 #[test]
+fn the_arrow_keys_move_the_selection_and_enter_confirms_it() {
+    let mut desktop = three_windows();
+    desktop.press(Key::Alt);
+    desktop.tap(Key::Tab);
+    eventually("the switcher is showing", || on_stage(&desktop, GREEN));
+
+    desktop.tap(Key::Right);
+    eventually("the selection moved right", || on_stage(&desktop, RED));
+    desktop.tap(Key::Left);
+    desktop.tap(Key::Left);
+    eventually("the selection moved two to the left", || on_stage(&desktop, BLUE));
+    desktop.tap(Key::Right);
+    eventually("the selection is back on the green window", || {
+        on_stage(&desktop, GREEN)
+    });
+
+    desktop.tap(Key::Enter);
+    eventually("enter switched while alt is still held", || {
+        desktop.focused().as_deref() == Some("green window")
+    });
+    desktop.release(Key::Alt);
+}
+
+#[test]
+fn clicking_the_backdrop_leaves_everything_as_it_was() {
+    let mut desktop = three_windows();
+    desktop.press(Key::Alt);
+    desktop.tap(Key::Tab);
+    eventually("the switcher is showing", || on_stage(&desktop, GREEN));
+
+    desktop.click_at(60.0, 60.0, Button::Left);
+    eventually("the switcher is gone", || !on_stage(&desktop, GREEN));
+    desktop.release(Key::Alt);
+
+    never("focus must not move", Duration::from_millis(700), || {
+        desktop.focused().as_deref() != Some("blue window")
+    });
+}
+
+#[test]
 fn clicking_a_window_in_the_row_switches_to_it() {
     let mut desktop = three_windows();
     desktop.press(Key::Alt);

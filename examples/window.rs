@@ -18,13 +18,15 @@ use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::{wl_output, wl_shm, wl_surface::WlSurface};
 use wayland_client::{Connection, QueueHandle};
 
+const STRIPE: usize = 8;
+
 struct Swatch {
     registry: RegistryState,
     outputs: OutputState,
     shm: Shm,
     pool: SlotPool,
     window: Window,
-    colour: [u8; 3],
+    stripes: Vec<[u8; 3]>,
     size: (u32, u32),
     closed: bool,
 }
@@ -32,12 +34,18 @@ struct Swatch {
 fn main() {
     let arguments: Vec<String> = env::args().collect();
     let [_, app_id, title, colour, placement] = arguments.as_slice() else {
-        eprintln!("usage: window APP_ID TITLE RRGGBB WIDTHxHEIGHT|maximized");
+        eprintln!("usage: window APP_ID TITLE RRGGBB[+RRGGBB...] WIDTHxHEIGHT|maximized");
         std::process::exit(2);
     };
-    let colour = u32::from_str_radix(colour, 16)
-        .expect("a colour like ff8800")
-        .to_be_bytes();
+    let stripes = colour
+        .split('+')
+        .map(|colour| {
+            u32::from_str_radix(colour, 16)
+                .expect("a colour like ff8800")
+                .to_be_bytes()
+        })
+        .map(|[_, red, green, blue]| [red, green, blue])
+        .collect();
     let size = (placement != "maximized").then(|| {
         let (wide, tall) = placement.split_once('x').expect("a size like 640x480");
         (wide.parse().expect("a width"), tall.parse().expect("a height"))
@@ -66,7 +74,7 @@ fn main() {
         pool: SlotPool::new(1 << 16, &shm).expect("shared memory"),
         shm,
         window,
-        colour: [colour[1], colour[2], colour[3]],
+        stripes,
         size: size.unwrap_or((640, 480)),
         closed: false,
     };
@@ -98,12 +106,11 @@ impl WindowHandler for Swatch {
             .pool
             .create_buffer(wide, tall, wide * 4, wl_shm::Format::Xrgb8888)
             .expect("a buffer for the window");
-        let [red, green, blue] = self.colour;
-        canvas
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .for_each(|pixel| pixel.copy_from_slice(&[blue, green, red, 255]));
+        for (index, pixel) in canvas.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let column = index % wide as usize;
+            let [red, green, blue] = self.stripes[column / STRIPE % self.stripes.len()];
+            pixel.copy_from_slice(&[blue, green, red, 255]);
+        }
         let surface = self.window.wl_surface();
         buffer.attach_to(surface).expect("a fresh buffer");
         surface.damage_buffer(0, 0, wide, tall);

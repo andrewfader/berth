@@ -4,10 +4,12 @@ mod dock;
 mod switcher;
 
 use std::collections::HashMap;
+use std::fs;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use calloop::generic::Generic;
+use calloop::signals::{Signal, Signals};
 use calloop::{EventLoop, Interest, Mode, PostAction};
 use calloop_wayland_source::WaylandSource;
 use cosmic_client_toolkit::cosmic_protocols::overlap_notify::v1::client::zcosmic_overlap_notify_v1::ZcosmicOverlapNotifyV1;
@@ -102,6 +104,7 @@ pub struct Berth {
     dock: DockView,
     switcher: Option<SwitcherView>,
     thumbnails: Thumbnails,
+    leaving: bool,
 }
 
 pub fn run(config: Config) -> anyhow::Result<()> {
@@ -113,7 +116,15 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         .insert(event_loop.handle())
         .map_err(|error| anyhow!("{error}"))?;
 
-    let listener = ipc::listen(&ipc::socket_path())?;
+    let socket = ipc::socket_path();
+    let listener = ipc::listen(&socket)?;
+    event_loop
+        .handle()
+        .insert_source(
+            Signals::new(&[Signal::SIGTERM, Signal::SIGINT])?,
+            |_, _, berth| berth.leaving = true,
+        )
+        .map_err(|error| anyhow!("{error}"))?;
     event_loop
         .handle()
         .insert_source(
@@ -184,16 +195,19 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         dock,
         switcher: None,
         thumbnails: Thumbnails::default(),
+        leaving: false,
     };
 
     berth.refresh_dock_items();
-    loop {
+    while !berth.leaving {
         let wait = berth
             .next_deadline()
             .map(|deadline| deadline.saturating_sub(berth.now()));
         event_loop.dispatch(wait, &mut berth)?;
         berth.tick();
     }
+    fs::remove_file(socket)?;
+    Ok(())
 }
 
 impl Berth {

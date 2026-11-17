@@ -7,7 +7,7 @@ use resvg::usvg;
 use tiny_skia::{Pixmap, Transform};
 
 use crate::geometry::Rect;
-use crate::paint;
+use crate::paint::{self, Finish};
 use crate::text::Typesetter;
 
 pub struct Icons {
@@ -72,7 +72,7 @@ pub fn rasterize(path: &Path, size: u32) -> Option<Pixmap> {
             &image,
             Rect::new(0.0, 0.0, size as f32, size as f32),
             0.0,
-            1.0,
+            Finish::Fine,
             1.0,
         );
     }
@@ -106,7 +106,7 @@ pub fn monogram(label: &str, size: u32, typesetter: &mut Typesetter) -> Pixmap {
             &letter,
             Rect::new((side - wide) / 2.0, (side - tall) / 2.0, wide, tall),
             0.0,
-            1.0,
+            Finish::Fine,
             1.0,
         );
     }

@@ -15,6 +15,7 @@ use super::Berth;
 use super::canvas::{Canvas, Medium};
 use crate::animation::Animated;
 use crate::dock::actions::Effect;
+use crate::paint::Finish;
 use crate::switcher::carousel::{self, Cover};
 use crate::switcher::paint::{Card, Scene, paint, picture_frame};
 use crate::switcher::session::{Direction, Session};
@@ -23,6 +24,8 @@ use crate::windows::WindowId;
 const GLIDE: Duration = Duration::from_millis(190);
 const HESITATION: Duration = Duration::from_millis(110);
 const BACKDROP_DETAIL: f32 = 0.05;
+const MOTION_DETAIL: f32 = 0.5;
+const DENSE: f32 = 1.5;
 const ICON: u32 = 128;
 
 struct Stage {
@@ -281,14 +284,20 @@ impl Berth {
                 icon,
             })
             .collect();
+        let animating = !view.focus.is_settled(now);
         let scene = Scene {
             covers: &covers,
             cards: &cards,
             selected: view.session.selected_index(),
             title: view.title.as_ref().map(|(_, title)| title.as_ref()),
+            finish: if animating { Finish::Draft } else { Finish::Fine },
             scale,
         };
-        let animating = !view.focus.is_settled(now);
+        let detail = if animating && scale >= DENSE {
+            MOTION_DETAIL
+        } else {
+            1.0
+        };
         if let Some(stage) = &mut view.stage {
             stage.canvas.present(
                 Medium {
@@ -297,7 +306,7 @@ impl Berth {
                     qh: &self.qh,
                 },
                 stage.size,
-                1.0,
+                detail,
                 animating,
                 |canvas, scale| paint(canvas, &Scene { scale, ..scene }),
             );

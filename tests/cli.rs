@@ -101,3 +101,23 @@ fn the_window_list_names_every_window_with_its_state() {
 
     assert_eq!(listing, "focused\tgreen\tgreen window\nopen\tred\tred window\n");
 }
+
+#[test]
+fn asked_to_stop_the_dock_leaves_the_screen_and_tidies_up_after_itself() {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    eventually("the dock is drawn", || desktop.screenshot().count(GREEN) > 0);
+
+    let farewell = desktop.ask_the_dock_to_stop();
+
+    assert!(farewell.success(), "{farewell}");
+    assert!(!desktop.socket().exists());
+    eventually("the dock is off the screen", || {
+        desktop.screenshot().count(GREEN) == 0
+    });
+    assert!(complaint(&desktop.run(&["windows"])).contains("not running"));
+
+    desktop.start_dock(&format!("[dock]\n{PINNED}"));
+    eventually("a new dock takes its place", || {
+        desktop.screenshot().count(GREEN) > 0
+    });
+}

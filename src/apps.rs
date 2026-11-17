@@ -6,6 +6,7 @@ use std::thread;
 
 use freedesktop_desktop_entry::unicase::Ascii;
 use freedesktop_desktop_entry::{DesktopEntry, Iter, default_paths, find_app_by_id, get_languages_from_env};
+use nix::sys::signal::SigSet;
 
 use crate::windows::AppId;
 
@@ -70,13 +71,15 @@ impl Catalog {
 
 pub fn launch(command: &[String]) -> io::Result<()> {
     let (program, arguments) = command.split_first().ok_or(io::ErrorKind::InvalidInput)?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()?;
+        .process_group(0);
+    unsafe { command.pre_exec(|| Ok(SigSet::empty().thread_set_mask()?)) };
+    let mut child = command.spawn()?;
     thread::spawn(move || child.wait());
     Ok(())
 }
