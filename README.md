@@ -1,5 +1,7 @@
 # berth
 
+[![CI](https://github.com/andrewfader/berth/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewfader/berth/actions/workflows/ci.yml)
+
 A dock and an Alt+Tab window switcher for the COSMIC desktop. It is a normal
 Wayland client: no compositor patch, no fork of COSMIC.
 
@@ -16,8 +18,12 @@ COSMIC dock and the icon theme chosen in COSMIC Settings.
 ## Install
 
 ```sh
-cargo install --path .
+git clone https://github.com/andrewfader/berth
+cargo install --path berth
 ```
+
+It needs Rust nightly (rustup picks it up from `rust-toolchain.toml`) and the
+`libxkbcommon` development files.
 
 Start it by hand with `berth`, or at login as a user service:
 

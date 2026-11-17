@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev pkg-config fonts-dejavu-core
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --lib --locked
+      - run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: berth-x86_64-linux
+          path: target/release/berth
+
+  desktop:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    env:
+      WLR_RENDERER: pixman
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - run: >
+          pacman -Syu --noconfirm --needed base-devel git rustup sudo
+          sway cosmic-comp cosmic-randr grim dbus mesa libxkbcommon wayland ttf-dejavu procps-ng
+      - uses: actions/checkout@v5
+      - run: useradd --create-home ci && chown -R ci .
+      - run: sudo -u ci --preserve-env=WLR_RENDERER,LIBGL_ALWAYS_SOFTWARE,CARGO_TERM_COLOR cargo test --locked
