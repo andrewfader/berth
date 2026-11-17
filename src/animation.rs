@@ -10,7 +10,12 @@ pub struct Animated {
 
 impl Animated {
     pub fn resting_at(value: f32) -> Self {
-        Self { from: value, to: value, started: Duration::ZERO, lasts: Duration::ZERO }
+        Self {
+            from: value,
+            to: value,
+            started: Duration::ZERO,
+            lasts: Duration::ZERO,
+        }
     }
 
     pub fn head_for(&mut self, target: f32, lasts: Duration, now: Duration) {

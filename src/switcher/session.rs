@@ -14,7 +14,11 @@ pub struct Session {
 
 impl Session {
     pub fn begin(windows: &Windows, direction: Direction) -> Option<Self> {
-        let candidates: Vec<WindowId> = windows.most_recent_first().iter().map(|window| window.id).collect();
+        let candidates: Vec<WindowId> = windows
+            .most_recent_first()
+            .iter()
+            .map(|window| window.id)
+            .collect();
         let count = candidates.len();
         let focused_is_first = windows.most_recent_first().first()?.active;
         let selected = match direction {
@@ -39,8 +43,15 @@ impl Session {
         };
         let mut candidates = self.candidates;
         candidates.remove(gone);
-        let selected = if gone < self.selected { self.selected - 1 } else { self.selected };
-        (!candidates.is_empty()).then(|| Self { selected: selected % candidates.len(), candidates })
+        let selected = if gone < self.selected {
+            self.selected - 1
+        } else {
+            self.selected
+        };
+        (!candidates.is_empty()).then(|| Self {
+            selected: selected % candidates.len(),
+            candidates,
+        })
     }
 
     pub fn selected(&self) -> WindowId {

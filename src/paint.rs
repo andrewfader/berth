@@ -27,29 +27,58 @@ pub fn rounded(rect: Rect, radius: f32) -> Option<Path> {
 
 pub fn tint(red: u8, green: u8, blue: u8, alpha: f32) -> Paint<'static> {
     let mut paint = Paint::default();
-    paint.set_color(Color::from_rgba8(red, green, blue, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8));
+    paint.set_color(Color::from_rgba8(
+        red,
+        green,
+        blue,
+        (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+    ));
     paint.anti_alias = true;
     paint
 }
 
 pub fn fill_rounded(canvas: &mut PixmapMut, rect: Rect, radius: f32, paint: &Paint, scale: f32) {
     if let Some(path) = rounded(rect, radius) {
-        canvas.fill_path(&path, paint, FillRule::Winding, Transform::from_scale(scale, scale), None);
+        canvas.fill_path(
+            &path,
+            paint,
+            FillRule::Winding,
+            Transform::from_scale(scale, scale),
+            None,
+        );
     }
 }
 
-pub fn stroke_rounded(canvas: &mut PixmapMut, rect: Rect, radius: f32, width: f32, paint: &Paint, scale: f32) {
+pub fn stroke_rounded(
+    canvas: &mut PixmapMut,
+    rect: Rect,
+    radius: f32,
+    width: f32,
+    paint: &Paint,
+    scale: f32,
+) {
     if let Some(path) = rounded(rect, radius) {
-        let stroke = Stroke { width, ..Stroke::default() };
+        let stroke = Stroke {
+            width,
+            ..Stroke::default()
+        };
         canvas.stroke_path(&path, paint, &stroke, Transform::from_scale(scale, scale), None);
     }
 }
 
 pub fn picture(canvas: &mut PixmapMut, image: &Pixmap, into: Rect, radius: f32, opacity: f32, scale: f32) {
-    let stretch = Transform::from_translate(into.x, into.y)
-        .pre_scale(into.width / image.width() as f32, into.height / image.height() as f32);
+    let stretch = Transform::from_translate(into.x, into.y).pre_scale(
+        into.width / image.width() as f32,
+        into.height / image.height() as f32,
+    );
     let paint = Paint {
-        shader: Pattern::new(image.as_ref(), SpreadMode::Pad, FilterQuality::Bilinear, opacity, stretch),
+        shader: Pattern::new(
+            image.as_ref(),
+            SpreadMode::Pad,
+            FilterQuality::Bilinear,
+            opacity,
+            stretch,
+        ),
         anti_alias: true,
         ..Paint::default()
     };
@@ -120,7 +149,14 @@ mod tests {
     fn a_picture_is_stretched_into_its_frame_at_the_canvas_scale() {
         let mut pixmap = Pixmap::new(200, 200).unwrap();
 
-        picture(&mut pixmap.as_mut(), &solid(16, 255, 0, 0), Rect::new(10.0, 10.0, 50.0, 50.0), 0.0, 1.0, 2.0);
+        picture(
+            &mut pixmap.as_mut(),
+            &solid(16, 255, 0, 0),
+            Rect::new(10.0, 10.0, 50.0, 50.0),
+            0.0,
+            1.0,
+            2.0,
+        );
 
         assert_eq!(rgba(&pixmap, 21.0, 21.0), [255, 0, 0, 255]);
         assert_eq!(rgba(&pixmap, 118.0, 118.0), [255, 0, 0, 255]);
@@ -133,7 +169,10 @@ mod tests {
         let rows = rounded_rows(Rect::new(10.0, 20.0, 100.0, 40.0), 12.0);
 
         let area: i32 = rows.iter().map(|(_, _, width, height)| width * height).sum();
-        assert!(rows.iter().all(|(x, y, width, height)| *x >= 10 && x + width <= 110 && *y >= 20 && y + height <= 60));
+        assert!(
+            rows.iter()
+                .all(|(x, y, width, height)| *x >= 10 && x + width <= 110 && *y >= 20 && y + height <= 60)
+        );
         assert!(rows.contains(&(10, 32, 100, 16)));
         assert!(area > 3800 && area < 4000, "{area}");
         assert!(rows.iter().any(|(x, y, _, _)| *y == 20 && *x > 10));
@@ -141,6 +180,9 @@ mod tests {
 
     #[test]
     fn a_square_cornered_shape_is_a_single_row() {
-        assert_eq!(rounded_rows(Rect::new(0.0, 0.0, 30.0, 10.0), 0.0), [(0, 0, 30, 10)]);
+        assert_eq!(
+            rounded_rows(Rect::new(0.0, 0.0, 30.0, 10.0), 0.0),
+            [(0, 0, 30, 10)]
+        );
     }
 }

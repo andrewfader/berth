@@ -36,16 +36,30 @@ impl Rect {
     }
 
     pub fn moved(&self, dx: f32, dy: f32) -> Self {
-        Self { x: self.x + dx, y: self.y + dy, ..*self }
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            ..*self
+        }
     }
 
     pub fn grown(&self, by: f32) -> Self {
-        Self::new(self.x - by, self.y - by, self.width + 2.0 * by, self.height + 2.0 * by)
+        Self::new(
+            self.x - by,
+            self.y - by,
+            self.width + 2.0 * by,
+            self.height + 2.0 * by,
+        )
     }
 
     pub fn union(&self, other: &Rect) -> Self {
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
-        Self::new(x, y, self.right().max(other.right()) - x, self.bottom().max(other.bottom()) - y)
+        Self::new(
+            x,
+            y,
+            self.right().max(other.right()) - x,
+            self.bottom().max(other.bottom()) - y,
+        )
     }
 }

@@ -23,15 +23,39 @@ pub struct Scene<'a> {
 pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
     let (layout, scale) = (scene.layout, scene.scale);
 
-    fill_rounded(canvas, layout.panel, CORNER, &tint(24, 24, 28, scene.opacity), scale);
-    stroke_rounded(canvas, layout.panel.grown(-0.5), CORNER, 1.0, &tint(255, 255, 255, 0.16), scale);
+    fill_rounded(
+        canvas,
+        layout.panel,
+        CORNER,
+        &tint(24, 24, 28, scene.opacity),
+        scale,
+    );
+    stroke_rounded(
+        canvas,
+        layout.panel.grown(-0.5),
+        CORNER,
+        1.0,
+        &tint(255, 255, 255, 0.16),
+        scale,
+    );
 
     for (tile, place) in scene.tiles.iter().zip(&layout.icons) {
         picture(canvas, tile.icon, *place, 0.0, 1.0, scale);
         if tile.running {
             let wide = if tile.focused { 14.0 } else { 4.0 };
-            let mark = Rect::new(place.center_x() - wide / 2.0, layout.panel.bottom() - 6.0, wide, 4.0);
-            fill_rounded(canvas, mark, 2.0, &tint(255, 255, 255, if tile.focused { 0.95 } else { 0.7 }), scale);
+            let mark = Rect::new(
+                place.center_x() - wide / 2.0,
+                layout.panel.bottom() - 6.0,
+                wide,
+                4.0,
+            );
+            fill_rounded(
+                canvas,
+                mark,
+                2.0,
+                &tint(255, 255, 255, if tile.focused { 0.95 } else { 0.7 }),
+                scale,
+            );
         }
     }
 
@@ -41,9 +65,19 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
         let (wide, tall) = (text.width() as f32 / scale, text.height() as f32 / scale);
         let surface_width = canvas.width() as f32 / scale;
         let bubble = Rect::new(0.0, (place.y - tall - 10.0).max(0.0), wide + 20.0, tall + 4.0);
-        let bubble = bubble.moved((place.center_x() - bubble.width / 2.0).clamp(0.0, surface_width - bubble.width), 0.0);
+        let bubble = bubble.moved(
+            (place.center_x() - bubble.width / 2.0).clamp(0.0, surface_width - bubble.width),
+            0.0,
+        );
         fill_rounded(canvas, bubble, bubble.height / 2.0, &tint(24, 24, 28, 0.9), scale);
-        picture(canvas, text, Rect::new(bubble.x + 10.0, bubble.y + 2.0, wide, tall), 0.0, 1.0, scale);
+        picture(
+            canvas,
+            text,
+            Rect::new(bubble.x + 10.0, bubble.y + 2.0, wide, tall),
+            0.0,
+            1.0,
+            scale,
+        );
     }
 }
 
@@ -62,17 +96,35 @@ mod tests {
         Metrics::for_icon(48.0, 1.5)
     }
 
-    fn painted(pose: Pose, tiles: &[(bool, bool)], label: Option<usize>, opacity: f32, scale: f32) -> Painted {
+    fn painted(
+        pose: Pose,
+        tiles: &[(bool, bool)],
+        label: Option<usize>,
+        opacity: f32,
+        scale: f32,
+    ) -> Painted {
         let (width, height) = metrics().surface(tiles.len());
         let layout = Layout::arrange(&metrics(), tiles.len(), pose);
         let icon = solid(96, 255, 0, 0);
         let text = solid(16, 0, 255, 0);
-        let tiles: Vec<Tile> =
-            tiles.iter().map(|(running, focused)| Tile { icon: &icon, running: *running, focused: *focused }).collect();
+        let tiles: Vec<Tile> = tiles
+            .iter()
+            .map(|(running, focused)| Tile {
+                icon: &icon,
+                running: *running,
+                focused: *focused,
+            })
+            .collect();
         let mut pixmap = Pixmap::new((width * scale) as u32, (height * scale) as u32).unwrap();
         paint(
             &mut pixmap.as_mut(),
-            &Scene { layout: &layout, tiles: &tiles, label: label.map(|index| (index, &text)), opacity, scale },
+            &Scene {
+                layout: &layout,
+                tiles: &tiles,
+                label: label.map(|index| (index, &text)),
+                opacity,
+                scale,
+            },
         );
         Painted { pixmap, layout }
     }
@@ -89,7 +141,10 @@ mod tests {
     fn the_panel_lets_the_desktop_show_through_by_the_configured_amount() {
         let see_through = resting(&[IDLE, IDLE], 0.4);
         let solid_panel = resting(&[IDLE, IDLE], 1.0);
-        let between_icons = (see_through.layout.icons[0].right() + 3.0, see_through.layout.panel.center_y());
+        let between_icons = (
+            see_through.layout.icons[0].right() + 3.0,
+            see_through.layout.panel.center_y(),
+        );
 
         let faint = alpha(&see_through.pixmap, between_icons.0, between_icons.1);
         assert!((100..=104).contains(&faint), "{faint}");
@@ -112,19 +167,29 @@ mod tests {
         let dock = resting(&[IDLE, IDLE, IDLE], 0.5);
 
         for icon in &dock.layout.icons {
-            assert_eq!(rgba(&dock.pixmap, icon.center_x(), icon.center_y()), [255, 0, 0, 255]);
+            assert_eq!(
+                rgba(&dock.pixmap, icon.center_x(), icon.center_y()),
+                [255, 0, 0, 255]
+            );
         }
     }
 
     #[test]
     fn a_magnified_icon_is_drawn_larger_rising_above_the_panel() {
         let rest = resting(&[IDLE, IDLE, IDLE], 0.5);
-        let over_the_middle = Pose { pointer: Some(rest.layout.icons[1].center_x()), zoom: 1.0, shown: 1.0 };
+        let over_the_middle = Pose {
+            pointer: Some(rest.layout.icons[1].center_x()),
+            zoom: 1.0,
+            shown: 1.0,
+        };
 
         let dock = painted(over_the_middle, &[IDLE, IDLE, IDLE], None, 0.5, 1.0);
 
         let above_the_panel = (dock.layout.icons[1].center_x(), dock.layout.panel.y - 6.0);
-        assert_eq!(rgba(&dock.pixmap, above_the_panel.0, above_the_panel.1), [255, 0, 0, 255]);
+        assert_eq!(
+            rgba(&dock.pixmap, above_the_panel.0, above_the_panel.1),
+            [255, 0, 0, 255]
+        );
         assert_eq!(alpha(&rest.pixmap, above_the_panel.0, above_the_panel.1), 0);
     }
 
@@ -132,7 +197,11 @@ mod tests {
     fn only_running_apps_get_a_mark_and_the_focused_one_a_wider_mark() {
         let dock = resting(&[IDLE, RUNNING, FOCUSED], 0.5);
         let under = |index: usize, aside: f32| {
-            rgba(&dock.pixmap, dock.layout.icons[index].center_x() + aside, dock.layout.panel.bottom() - 4.0)
+            rgba(
+                &dock.pixmap,
+                dock.layout.icons[index].center_x() + aside,
+                dock.layout.panel.bottom() - 4.0,
+            )
         };
 
         assert_ne!(under(0, 0.0)[0], under(1, 0.0)[0]);
@@ -146,16 +215,38 @@ mod tests {
         let rest = resting(&[IDLE, IDLE, IDLE], 0.5);
         let pointer = rest.layout.icons[2].center_x();
 
-        let dock = painted(Pose { pointer: Some(pointer), zoom: 1.0, shown: 1.0 }, &[IDLE, IDLE, IDLE], Some(2), 0.5, 1.0);
+        let dock = painted(
+            Pose {
+                pointer: Some(pointer),
+                zoom: 1.0,
+                shown: 1.0,
+            },
+            &[IDLE, IDLE, IDLE],
+            Some(2),
+            0.5,
+            1.0,
+        );
 
         let icon = dock.layout.icons[2];
-        assert_eq!(rgba(&dock.pixmap, icon.center_x(), icon.y - 18.0), [0, 255, 0, 255]);
+        assert_eq!(
+            rgba(&dock.pixmap, icon.center_x(), icon.y - 18.0),
+            [0, 255, 0, 255]
+        );
         assert_eq!(alpha(&rest.pixmap, icon.center_x(), icon.y - 18.0), 0);
     }
 
     #[test]
     fn a_hidden_dock_paints_nothing_at_all() {
-        let dock = painted(Pose { shown: 0.0, ..Pose::RESTING }, &[RUNNING, FOCUSED], None, 0.5, 1.0);
+        let dock = painted(
+            Pose {
+                shown: 0.0,
+                ..Pose::RESTING
+            },
+            &[RUNNING, FOCUSED],
+            None,
+            0.5,
+            1.0,
+        );
 
         assert!(dock.pixmap.pixels().iter().all(|pixel| pixel.alpha() == 0));
     }
@@ -165,7 +256,13 @@ mod tests {
         let dock = painted(Pose::RESTING, &[IDLE], None, 0.5, 2.0);
         let icon = dock.layout.icons[0];
 
-        assert_eq!(rgba(&dock.pixmap, icon.right() * 2.0 - 2.0, icon.bottom() * 2.0 - 2.0), [255, 0, 0, 255]);
-        assert_eq!(rgba(&dock.pixmap, icon.x * 2.0 + 2.0, icon.y * 2.0 + 2.0), [255, 0, 0, 255]);
+        assert_eq!(
+            rgba(&dock.pixmap, icon.right() * 2.0 - 2.0, icon.bottom() * 2.0 - 2.0),
+            [255, 0, 0, 255]
+        );
+        assert_eq!(
+            rgba(&dock.pixmap, icon.x * 2.0 + 2.0, icon.y * 2.0 + 2.0),
+            [255, 0, 0, 255]
+        );
     }
 }

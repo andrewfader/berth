@@ -115,7 +115,11 @@ mod tests {
 
     #[test]
     fn every_request_survives_the_trip_over_the_wire() {
-        for request in [Request::Switch(Direction::Next), Request::Switch(Direction::Previous), Request::Windows] {
+        for request in [
+            Request::Switch(Direction::Next),
+            Request::Switch(Direction::Previous),
+            Request::Windows,
+        ] {
             assert_eq!(request.to_string().parse(), Ok(request));
         }
     }

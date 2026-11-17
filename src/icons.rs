@@ -17,10 +17,19 @@ pub struct Icons {
 
 impl Icons {
     pub fn themed(theme: impl Into<String>) -> Self {
-        Self { theme: theme.into(), loaded: HashMap::new() }
+        Self {
+            theme: theme.into(),
+            loaded: HashMap::new(),
+        }
     }
 
-    pub fn icon(&mut self, name: Option<&str>, label: &str, size: u32, typesetter: &mut Typesetter) -> Rc<Pixmap> {
+    pub fn icon(
+        &mut self,
+        name: Option<&str>,
+        label: &str,
+        size: u32,
+        typesetter: &mut Typesetter,
+    ) -> Rc<Pixmap> {
         let key = (name.unwrap_or(label).to_owned(), size);
         if let Some(icon) = self.loaded.get(&key) {
             return icon.clone();
@@ -49,13 +58,23 @@ impl Icons {
 pub fn rasterize(path: &Path, size: u32) -> Option<Pixmap> {
     let data = fs::read(path).ok()?;
     let mut canvas = Pixmap::new(size, size)?;
-    if path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("svg")) {
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+    {
         let tree = usvg::Tree::from_data(&data, &usvg::Options::default()).ok()?;
         let fit = size as f32 / tree.size().width().max(tree.size().height());
         resvg::render(&tree, Transform::from_scale(fit, fit), &mut canvas.as_mut());
     } else {
         let image = Pixmap::decode_png(&data).ok()?;
-        paint::picture(&mut canvas.as_mut(), &image, Rect::new(0.0, 0.0, size as f32, size as f32), 0.0, 1.0, 1.0);
+        paint::picture(
+            &mut canvas.as_mut(),
+            &image,
+            Rect::new(0.0, 0.0, size as f32, size as f32),
+            0.0,
+            1.0,
+            1.0,
+        );
     }
     Some(canvas)
 }
@@ -63,7 +82,9 @@ pub fn rasterize(path: &Path, size: u32) -> Option<Pixmap> {
 pub fn monogram(label: &str, size: u32, typesetter: &mut Typesetter) -> Pixmap {
     let mut canvas = Pixmap::new(size.max(1), size.max(1)).expect("an icon has a size");
     let side = size as f32;
-    let hue = label.bytes().fold(0u32, |sum, byte| sum.wrapping_mul(31).wrapping_add(byte as u32));
+    let hue = label
+        .bytes()
+        .fold(0u32, |sum, byte| sum.wrapping_mul(31).wrapping_add(byte as u32));
     let [red, green, blue] = [hue, hue >> 8, hue >> 16].map(|channel| 70 + (channel % 110) as u8);
     paint::fill_rounded(
         &mut canvas.as_mut(),
@@ -72,7 +93,12 @@ pub fn monogram(label: &str, size: u32, typesetter: &mut Typesetter) -> Pixmap {
         &paint::tint(red, green, blue, 1.0),
         1.0,
     );
-    let initial: String = label.chars().find(|letter| letter.is_alphanumeric()).into_iter().flat_map(char::to_uppercase).collect();
+    let initial: String = label
+        .chars()
+        .find(|letter| letter.is_alphanumeric())
+        .into_iter()
+        .flat_map(char::to_uppercase)
+        .collect();
     if let Some(letter) = typesetter.line(&initial, side * 0.5, side) {
         let (wide, tall) = (letter.width() as f32, letter.height() as f32);
         paint::picture(
@@ -143,7 +169,11 @@ mod tests {
 
         assert_eq!((icon.width(), icon.height()), (64, 64));
         assert_eq!(alpha(&icon, 32.0, 8.0), 255);
-        assert!(icon.pixels().iter().any(|pixel| pixel.red() == 255 && pixel.green() == 255 && pixel.blue() == 255));
+        assert!(
+            icon.pixels()
+                .iter()
+                .any(|pixel| pixel.red() == 255 && pixel.green() == 255 && pixel.blue() == 255)
+        );
     }
 
     #[test]

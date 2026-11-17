@@ -23,7 +23,12 @@ pub struct Reveal {
 
 impl Reveal {
     pub fn new(autohide: Autohide) -> Self {
-        Self { autohide, hovered: false, obstructed: false, unwanted_since: None }
+        Self {
+            autohide,
+            hovered: false,
+            obstructed: false,
+            unwanted_since: None,
+        }
     }
 
     pub fn pointer_entered(&mut self, now: Duration) {

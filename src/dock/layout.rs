@@ -67,7 +67,11 @@ pub struct Pose {
 }
 
 impl Pose {
-    pub const RESTING: Pose = Pose { pointer: None, zoom: 0.0, shown: 1.0 };
+    pub const RESTING: Pose = Pose {
+        pointer: None,
+        zoom: 0.0,
+        shown: 1.0,
+    };
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -86,7 +90,9 @@ impl Layout {
         let sizes: Vec<f32> = (0..items)
             .map(|index| {
                 let resting_center = first_left + index as f32 * metrics.pitch() + metrics.icon / 2.0;
-                let swell = pose.pointer.map_or(0.0, |pointer| metrics.swell(pointer - resting_center));
+                let swell = pose
+                    .pointer
+                    .map_or(0.0, |pointer| metrics.swell(pointer - resting_center));
                 metrics.icon * (1.0 + (metrics.magnification - 1.0) * pose.zoom * swell)
             })
             .collect();
@@ -100,7 +106,9 @@ impl Layout {
 
         let anchor = pose.pointer.unwrap_or(first_left);
         let resting_offset = anchor - first_left;
-        let slot = (resting_offset / metrics.pitch()).floor().clamp(0.0, items.saturating_sub(1) as f32);
+        let slot = (resting_offset / metrics.pitch())
+            .floor()
+            .clamp(0.0, items.saturating_sub(1) as f32);
         let within = resting_offset - slot * metrics.pitch();
         let stretched = match sizes.get(slot as usize) {
             Some(size) if (0.0..metrics.icon).contains(&within) => within * size / metrics.icon,
@@ -116,7 +124,10 @@ impl Layout {
             .collect();
 
         let left = icons.first().map_or(first_left, |icon| icon.x) - metrics.padding;
-        let right = icons.last().map_or(first_left + metrics.icon, |icon| icon.right()) + metrics.padding;
+        let right = icons
+            .last()
+            .map_or(first_left + metrics.icon, |icon| icon.right())
+            + metrics.padding;
         let panel = Rect::new(
             left,
             baseline - metrics.icon - metrics.padding,
@@ -137,7 +148,9 @@ impl Layout {
     }
 
     pub fn reach(&self) -> Rect {
-        self.icons.iter().fold(self.panel, |reach, icon| reach.union(icon))
+        self.icons
+            .iter()
+            .fold(self.panel, |reach, icon| reach.union(icon))
     }
 }
 
@@ -150,7 +163,11 @@ mod tests {
     }
 
     fn hovering(x: f32) -> Pose {
-        Pose { pointer: Some(x), zoom: 1.0, shown: 1.0 }
+        Pose {
+            pointer: Some(x),
+            zoom: 1.0,
+            shown: 1.0,
+        }
     }
 
     fn resting(items: usize) -> Layout {
@@ -164,9 +181,19 @@ mod tests {
         let layout = resting(5);
 
         assert_eq!(layout.icons.len(), 5);
-        assert!(layout.icons.iter().all(|icon| icon.width == 48.0 && icon.height == 48.0));
+        assert!(
+            layout
+                .icons
+                .iter()
+                .all(|icon| icon.width == 48.0 && icon.height == 48.0)
+        );
         assert!((layout.panel.center_x() - width / 2.0).abs() < 0.01);
-        assert!(layout.icons.iter().all(|icon| icon.y > layout.panel.y && icon.bottom() < layout.panel.bottom()));
+        assert!(
+            layout
+                .icons
+                .iter()
+                .all(|icon| icon.y > layout.panel.y && icon.bottom() < layout.panel.bottom())
+        );
         assert!(layout.panel.bottom() < height);
     }
 
@@ -197,7 +224,12 @@ mod tests {
 
         let layout = Layout::arrange(&metrics(), 7, hovering(rest.icons[2].center_x()));
 
-        assert!(layout.icons.iter().all(|icon| icon.bottom() == rest.icons[0].bottom()));
+        assert!(
+            layout
+                .icons
+                .iter()
+                .all(|icon| icon.bottom() == rest.icons[0].bottom())
+        );
         assert!(layout.icons.windows(2).all(|pair| pair[0].right() < pair[1].x));
         assert!(layout.icons[2].y < layout.panel.y);
     }
@@ -209,7 +241,10 @@ mod tests {
             for pointer in [icon.x + 1.0, icon.center_x(), icon.right() - 1.0] {
                 let layout = Layout::arrange(&metrics(), 7, hovering(pointer));
 
-                assert!(layout.icons[index].contains(pointer, layout.icons[index].center_y()), "icon {index}");
+                assert!(
+                    layout.icons[index].contains(pointer, layout.icons[index].center_y()),
+                    "icon {index}"
+                );
                 assert_eq!(Layout::item_at(&metrics(), 7, pointer), Some(index));
             }
         }
@@ -220,10 +255,19 @@ mod tests {
         let (width, _) = metrics().surface(12);
         let rest = resting(12);
 
-        for pointer in [rest.panel.x, rest.icons[0].center_x(), rest.icons[6].x, rest.icons[11].right(), rest.panel.right()] {
+        for pointer in [
+            rest.panel.x,
+            rest.icons[0].center_x(),
+            rest.icons[6].x,
+            rest.icons[11].right(),
+            rest.panel.right(),
+        ] {
             let layout = Layout::arrange(&metrics(), 12, hovering(pointer));
 
-            assert!(layout.reach().x >= 0.0 && layout.reach().right() <= width, "pointer at {pointer}");
+            assert!(
+                layout.reach().x >= 0.0 && layout.reach().right() <= width,
+                "pointer at {pointer}"
+            );
             assert!(layout.reach().y >= metrics().label - 0.01);
         }
     }
@@ -235,7 +279,11 @@ mod tests {
         let halfway = Layout::arrange(
             &metrics(),
             5,
-            Pose { pointer: Some(middle.center_x()), zoom: 0.5, shown: 1.0 },
+            Pose {
+                pointer: Some(middle.center_x()),
+                zoom: 0.5,
+                shown: 1.0,
+            },
         );
 
         assert!((halfway.icons[2].width - 60.0).abs() < 0.01);
@@ -245,7 +293,14 @@ mod tests {
     fn a_hidden_dock_has_sunk_completely_below_its_surface() {
         let (_, height) = metrics().surface(5);
 
-        let hidden = Layout::arrange(&metrics(), 5, Pose { shown: 0.0, ..Pose::RESTING });
+        let hidden = Layout::arrange(
+            &metrics(),
+            5,
+            Pose {
+                shown: 0.0,
+                ..Pose::RESTING
+            },
+        );
 
         assert!(hidden.panel.y >= height);
     }

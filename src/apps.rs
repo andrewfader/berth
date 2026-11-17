@@ -44,8 +44,23 @@ impl Catalog {
         self.entry(app.as_str())?.icon()
     }
 
+    pub fn pinned(&self, wanted: &[String]) -> Vec<AppId> {
+        let mut pinned = Vec::new();
+        for id in wanted {
+            match self.entry(id).map(|entry| AppId::new(entry.id())) {
+                Some(app) if !pinned.contains(&app) => pinned.push(app),
+                Some(_) => {}
+                None => log::warn!("{id} is pinned but has no launcher, leaving it out"),
+            }
+        }
+        pinned
+    }
+
     pub fn command(&self, app: &AppId) -> Option<Vec<String>> {
-        self.entry(app.as_str())?.parse_exec().ok().filter(|words| !words.is_empty())
+        self.entry(app.as_str())?
+            .parse_exec()
+            .ok()
+            .filter(|words| !words.is_empty())
     }
 
     fn entry(&self, id: &str) -> Option<&DesktopEntry> {
@@ -75,7 +90,11 @@ mod tests {
     fn catalog_of(entries: &[(&str, &str)]) -> (tempfile::TempDir, Catalog) {
         let dir = tempfile::tempdir().unwrap();
         for (file, body) in entries {
-            fs::write(dir.path().join(file), format!("[Desktop Entry]\nType=Application\n{body}\n")).unwrap();
+            fs::write(
+                dir.path().join(file),
+                format!("[Desktop Entry]\nType=Application\n{body}\n"),
+            )
+            .unwrap();
         }
         let catalog = Catalog::found_in([dir.path().to_owned()].into_iter());
         (dir, catalog)
@@ -85,13 +104,18 @@ mod tests {
     fn a_window_is_matched_to_its_launcher_by_desktop_file_name_whatever_the_case() {
         let (_dir, catalog) = catalog_of(&[("org.example.Editor.desktop", "Name=Editor\nExec=editor")]);
 
-        assert_eq!(catalog.identify("org.example.editor"), AppId::new("org.example.Editor"));
+        assert_eq!(
+            catalog.identify("org.example.editor"),
+            AppId::new("org.example.Editor")
+        );
     }
 
     #[test]
     fn a_window_whose_app_id_differs_is_matched_by_its_startup_wm_class() {
-        let (_dir, catalog) =
-            catalog_of(&[("browser-nightly.desktop", "Name=Browser\nExec=browser\nStartupWMClass=browser-dev")]);
+        let (_dir, catalog) = catalog_of(&[(
+            "browser-nightly.desktop",
+            "Name=Browser\nExec=browser\nStartupWMClass=browser-dev",
+        )]);
 
         assert_eq!(catalog.identify("browser-dev"), AppId::new("browser-nightly"));
     }
@@ -110,8 +134,10 @@ mod tests {
 
     #[test]
     fn an_app_is_described_by_its_launcher() {
-        let (_dir, catalog) =
-            catalog_of(&[("editor.desktop", "Name=Text Editor\nIcon=accessories-text-editor\nExec=editor")]);
+        let (_dir, catalog) = catalog_of(&[(
+            "editor.desktop",
+            "Name=Text Editor\nIcon=accessories-text-editor\nExec=editor",
+        )]);
         let app = AppId::new("editor");
 
         assert_eq!(catalog.name(&app), "Text Editor");
@@ -122,7 +148,32 @@ mod tests {
     fn the_launch_command_leaves_out_the_file_placeholders() {
         let (_dir, catalog) = catalog_of(&[("editor.desktop", "Name=Editor\nExec=editor --new-window %U")]);
 
-        assert_eq!(catalog.command(&AppId::new("editor")).unwrap(), ["editor", "--new-window"]);
+        assert_eq!(
+            catalog.command(&AppId::new("editor")).unwrap(),
+            ["editor", "--new-window"]
+        );
+    }
+
+    #[test]
+    fn pins_keep_their_order_under_the_name_of_their_launcher_without_repeats() {
+        let (_dir, catalog) = catalog_of(&[
+            ("org.example.Editor.desktop", "Name=Editor\nExec=editor"),
+            ("browser.desktop", "Name=Browser\nExec=browser"),
+        ]);
+        let wanted = ["browser", "org.example.editor", "Browser"].map(String::from);
+
+        assert_eq!(
+            catalog.pinned(&wanted),
+            [AppId::new("browser"), AppId::new("org.example.Editor")]
+        );
+    }
+
+    #[test]
+    fn a_pin_for_an_app_that_is_not_installed_is_left_out() {
+        let (_dir, catalog) = catalog_of(&[("browser.desktop", "Name=Browser\nExec=browser")]);
+        let wanted = ["uninstalled-app", "browser"].map(String::from);
+
+        assert_eq!(catalog.pinned(&wanted), [AppId::new("browser")]);
     }
 
     #[test]

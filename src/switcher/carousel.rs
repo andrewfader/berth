@@ -12,6 +12,17 @@ pub struct Cover {
     pub light: f32,
 }
 
+pub fn stage_on(screen: (u32, u32)) -> Rect {
+    let wide = screen.0.saturating_sub(64).clamp(320, 1800).min(screen.0);
+    let tall = ((screen.1 as f32 * 0.55) as u32).clamp(240, 720).min(screen.1);
+    Rect::new(
+        ((screen.0 - wide) / 2) as f32,
+        ((screen.1 - tall) / 2) as f32,
+        wide as f32,
+        tall as f32,
+    )
+}
+
 pub fn front_frame(stage: (f32, f32)) -> Rect {
     let (width, height) = stage;
     let tall = height * 0.56;
@@ -35,7 +46,14 @@ pub fn arrange(count: usize, focus: f32, stage: (f32, f32)) -> Vec<Cover> {
                 wide,
                 tall,
             );
-            (depth, Cover { index, frame, light: (1.0 - 0.3 * depth).max(0.3) })
+            (
+                depth,
+                Cover {
+                    index,
+                    frame,
+                    light: (1.0 - 0.3 * depth).max(0.3),
+                },
+            )
         })
         .collect();
     covers.sort_by(|(a, _), (b, _)| b.total_cmp(a));
@@ -50,6 +68,22 @@ mod tests {
 
     fn cover(covers: &[Cover], index: usize) -> Cover {
         *covers.iter().find(|cover| cover.index == index).unwrap()
+    }
+
+    #[test]
+    fn the_stage_is_a_band_across_the_middle_of_the_screen() {
+        let stage = stage_on((1920, 1080));
+
+        assert_eq!((stage.width, stage.height), (1800.0, 594.0));
+        assert_eq!((stage.center_x(), stage.center_y()), (960.0, 540.0));
+    }
+
+    #[test]
+    fn the_stage_never_outgrows_a_small_screen_or_sprawls_over_a_huge_one() {
+        let (small, huge) = (stage_on((300, 200)), stage_on((5120, 2880)));
+
+        assert_eq!((small.width, small.height), (300.0, 200.0));
+        assert_eq!((huge.width, huge.height), (1800.0, 720.0));
     }
 
     #[test]
@@ -87,7 +121,11 @@ mod tests {
     fn every_window_stands_on_the_same_floor() {
         let covers = arrange(5, 1.0, STAGE);
 
-        assert!(covers.iter().all(|cover| (cover.frame.bottom() - front_frame(STAGE).bottom()).abs() < 0.01));
+        assert!(
+            covers
+                .iter()
+                .all(|cover| (cover.frame.bottom() - front_frame(STAGE).bottom()).abs() < 0.01)
+        );
     }
 
     #[test]
@@ -113,6 +151,10 @@ mod tests {
     fn the_whole_row_fits_on_the_stage() {
         let covers = arrange(30, 10.0, STAGE);
 
-        assert!(covers.iter().all(|cover| cover.frame.x >= 0.0 && cover.frame.right() <= 1600.0));
+        assert!(
+            covers
+                .iter()
+                .all(|cover| cover.frame.x >= 0.0 && cover.frame.right() <= 1600.0)
+        );
     }
 }

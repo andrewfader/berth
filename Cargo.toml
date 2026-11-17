@@ -15,13 +15,17 @@ freedesktop-desktop-entry = "0.8.4"
 freedesktop-icons = "0.4.0"
 log = "0.4.35"
 resvg = { version = "0.50.0", default-features = false, features = ["raster-images"] }
+ron = "0.12.2"
 rustix = "1.1.6"
 serde = { version = "1.0.229", features = ["derive"] }
 tiny-skia = "0.12.0"
 toml = "1.2.1"
+wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 
 [dev-dependencies]
 png = "0.18.1"
 tempfile = "3.27.0"
+wayland-protocols-misc = { version = "0.3.12", features = ["client"] }
+xkbcommon = "0.8.0"

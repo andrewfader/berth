@@ -13,7 +13,10 @@ impl DockItem {
     }
 
     pub fn active_window(&self, windows: &Windows) -> Option<WindowId> {
-        windows.active().map(|window| window.id).filter(|id| self.oldest_first.contains(id))
+        windows
+            .active()
+            .map(|window| window.id)
+            .filter(|id| self.oldest_first.contains(id))
     }
 
     pub fn most_recent_window(&self, windows: &Windows) -> Option<WindowId> {
@@ -28,7 +31,11 @@ impl DockItem {
 pub fn dock_items(pinned: &[AppId], windows: &Windows) -> Vec<DockItem> {
     let mut items: Vec<DockItem> = pinned
         .iter()
-        .map(|app| DockItem { app: app.clone(), pinned: true, oldest_first: Vec::new() })
+        .map(|app| DockItem {
+            app: app.clone(),
+            pinned: true,
+            oldest_first: Vec::new(),
+        })
         .collect();
 
     let mut oldest_first: Vec<_> = windows.most_recent_first().iter().collect();

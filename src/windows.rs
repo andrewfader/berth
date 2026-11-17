@@ -68,6 +68,21 @@ impl Windows {
     }
 }
 
+pub fn listing(windows: &Windows) -> String {
+    windows
+        .most_recent_first()
+        .iter()
+        .map(|window| {
+            let state = match (window.active, window.minimized) {
+                (true, _) => "focused",
+                (false, true) => "minimized",
+                (false, false) => "open",
+            };
+            format!("{state}\t{}\t{}\n", window.app.as_str(), window.title)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub mod fixtures {
     use super::*;
@@ -83,18 +98,30 @@ pub mod fixtures {
     }
 
     pub fn focused(id: u32, app: &str) -> Window {
-        Window { active: true, ..window(id, app) }
+        Window {
+            active: true,
+            ..window(id, app)
+        }
     }
 
     pub fn minimized(id: u32, app: &str) -> Window {
-        Window { minimized: true, ..window(id, app) }
+        Window {
+            minimized: true,
+            ..window(id, app)
+        }
     }
 
     pub fn used_in_order(windows: &[Window]) -> Windows {
         let mut all = Windows::default();
         for window in windows.iter().rev() {
-            all.report(Window { active: true, ..window.clone() });
-            all.report(Window { active: false, ..window.clone() });
+            all.report(Window {
+                active: true,
+                ..window.clone()
+            });
+            all.report(Window {
+                active: false,
+                ..window.clone()
+            });
         }
         if let Some(front) = windows.first() {
             all.report(front.clone());
@@ -109,7 +136,11 @@ mod tests {
     use super::*;
 
     fn recency(windows: &Windows) -> Vec<u32> {
-        windows.most_recent_first().iter().map(|window| window.id.0).collect()
+        windows
+            .most_recent_first()
+            .iter()
+            .map(|window| window.id.0)
+            .collect()
     }
 
     #[test]
@@ -139,7 +170,10 @@ mod tests {
     fn a_retitled_window_keeps_its_place() {
         let mut windows = used_in_order(&[focused(1, "editor"), window(2, "browser")]);
 
-        windows.report(Window { title: "renamed".into(), ..window(2, "browser") });
+        windows.report(Window {
+            title: "renamed".into(),
+            ..window(2, "browser")
+        });
 
         assert_eq!(recency(&windows), [1, 2]);
         assert_eq!(windows.get(WindowId(2)).unwrap().title, "renamed");
@@ -151,9 +185,26 @@ mod tests {
         windows.report(focused(1, "editor"));
         windows.report(window(2, "browser"));
 
-        windows.report(Window { title: "still here".into(), ..focused(1, "editor") });
+        windows.report(Window {
+            title: "still here".into(),
+            ..focused(1, "editor")
+        });
 
         assert_eq!(recency(&windows), [1, 2]);
+    }
+
+    #[test]
+    fn the_listing_names_each_window_with_its_state_most_recent_first() {
+        let windows = used_in_order(&[
+            focused(1, "editor"),
+            minimized(2, "browser"),
+            window(3, "terminal"),
+        ]);
+
+        assert_eq!(
+            listing(&windows),
+            "focused\teditor\teditor 1\nminimized\tbrowser\tbrowser 2\nopen\tterminal\tterminal 3\n"
+        );
     }
 
     #[test]

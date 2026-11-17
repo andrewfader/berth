@@ -48,8 +48,6 @@ pub struct Gestures {
     pub click: Action,
     pub middle_click: Action,
     pub right_click: Action,
-    pub shift_click: Action,
-    pub ctrl_click: Action,
     pub scroll_up: Action,
     pub scroll_down: Action,
 }
@@ -60,8 +58,6 @@ impl Default for Gestures {
             click: Action::Toggle,
             middle_click: Action::Launch,
             right_click: Action::Minimize,
-            shift_click: Action::Launch,
-            ctrl_click: Action::Close,
             scroll_up: Action::CycleBack,
             scroll_down: Action::Cycle,
         }
@@ -74,8 +70,6 @@ impl Gestures {
             Gesture::Click => self.click,
             Gesture::MiddleClick => self.middle_click,
             Gesture::RightClick => self.right_click,
-            Gesture::ShiftClick => self.shift_click,
-            Gesture::CtrlClick => self.ctrl_click,
             Gesture::ScrollUp => self.scroll_up,
             Gesture::ScrollDown => self.scroll_down,
         }
@@ -91,7 +85,10 @@ pub struct Switcher {
 
 impl Default for Switcher {
     fn default() -> Self {
-        Self { opacity: 0.45, blur: true }
+        Self {
+            opacity: 0.45,
+            blur: true,
+        }
     }
 }
 
@@ -99,7 +96,10 @@ impl Default for Switcher {
 pub enum ConfigError {
     Unreadable(PathBuf, io::Error),
     Malformed(toml::de::Error),
-    OutOfRange { key: &'static str, allowed: &'static str },
+    OutOfRange {
+        key: &'static str,
+        allowed: &'static str,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -133,11 +133,28 @@ impl Config {
     }
 
     fn validated(self) -> Result<Self, ConfigError> {
-        let within = |ok: bool, key, allowed| ok.then_some(()).ok_or(ConfigError::OutOfRange { key, allowed });
-        within((16..=256).contains(&self.dock.icon_size), "dock.icon-size", "between 16 and 256")?;
-        within((1.0..=3.0).contains(&self.dock.magnification), "dock.magnification", "between 1.0 and 3.0")?;
-        within((0.0..=1.0).contains(&self.dock.opacity), "dock.opacity", "between 0.0 and 1.0")?;
-        within((0.0..=1.0).contains(&self.switcher.opacity), "switcher.opacity", "between 0.0 and 1.0")?;
+        let within =
+            |ok: bool, key, allowed| ok.then_some(()).ok_or(ConfigError::OutOfRange { key, allowed });
+        within(
+            (16..=256).contains(&self.dock.icon_size),
+            "dock.icon-size",
+            "between 16 and 256",
+        )?;
+        within(
+            (1.0..=3.0).contains(&self.dock.magnification),
+            "dock.magnification",
+            "between 1.0 and 3.0",
+        )?;
+        within(
+            (0.0..=1.0).contains(&self.dock.opacity),
+            "dock.opacity",
+            "between 0.0 and 1.0",
+        )?;
+        within(
+            (0.0..=1.0).contains(&self.switcher.opacity),
+            "switcher.opacity",
+            "between 0.0 and 1.0",
+        )?;
         Ok(self)
     }
 }
@@ -171,7 +188,10 @@ mod tests {
     fn a_missing_file_means_defaults() {
         let dir = tempfile::tempdir().unwrap();
 
-        assert_eq!(Config::load(&dir.path().join("config.toml")).unwrap(), Config::default());
+        assert_eq!(
+            Config::load(&dir.path().join("config.toml")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
@@ -210,17 +230,32 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.dock.actions.action_for(Gesture::Click), Action::Focus);
-        assert_eq!(config.dock.actions.action_for(Gesture::MiddleClick), Action::Close);
+        assert_eq!(
+            config.dock.actions.action_for(Gesture::MiddleClick),
+            Action::Close
+        );
         assert_eq!(config.dock.actions.action_for(Gesture::ScrollDown), Action::None);
-        assert_eq!(config.dock.actions.action_for(Gesture::ScrollUp), Action::CycleBack);
-        assert_eq!(config.dock.actions.action_for(Gesture::ShiftClick), Action::Launch);
+        assert_eq!(
+            config.dock.actions.action_for(Gesture::ScrollUp),
+            Action::CycleBack
+        );
+        assert_eq!(
+            config.dock.actions.action_for(Gesture::RightClick),
+            Action::Minimize
+        );
     }
 
     #[test]
     fn the_switcher_backdrop_is_configurable() {
         let config = Config::parse("[switcher]\nopacity = 0.8\nblur = false").unwrap();
 
-        assert_eq!(config.switcher, Switcher { opacity: 0.8, blur: false });
+        assert_eq!(
+            config.switcher,
+            Switcher {
+                opacity: 0.8,
+                blur: false
+            }
+        );
     }
 
     #[test]
@@ -232,15 +267,30 @@ mod tests {
     fn an_unknown_action_is_reported_with_the_ones_that_exist() {
         let message = rejection("[dock.actions]\nclick = \"explode\"");
 
-        assert!(message.contains("explode") && message.contains("toggle"), "{message}");
+        assert!(
+            message.contains("explode") && message.contains("toggle"),
+            "{message}"
+        );
     }
 
     #[test]
     fn values_outside_their_range_are_rejected_by_name() {
-        assert_eq!(rejection("[dock]\nopacity = 1.5"), "dock.opacity must be between 0.0 and 1.0");
-        assert_eq!(rejection("[dock]\nmagnification = 0.5"), "dock.magnification must be between 1.0 and 3.0");
-        assert_eq!(rejection("[dock]\nicon-size = 4"), "dock.icon-size must be between 16 and 256");
-        assert_eq!(rejection("[switcher]\nopacity = -1"), "switcher.opacity must be between 0.0 and 1.0");
+        assert_eq!(
+            rejection("[dock]\nopacity = 1.5"),
+            "dock.opacity must be between 0.0 and 1.0"
+        );
+        assert_eq!(
+            rejection("[dock]\nmagnification = 0.5"),
+            "dock.magnification must be between 1.0 and 3.0"
+        );
+        assert_eq!(
+            rejection("[dock]\nicon-size = 4"),
+            "dock.icon-size must be between 16 and 256"
+        );
+        assert_eq!(
+            rejection("[switcher]\nopacity = -1"),
+            "switcher.opacity must be between 0.0 and 1.0"
+        );
     }
 
     #[test]
