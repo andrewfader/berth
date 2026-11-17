@@ -224,3 +224,24 @@ fn on_a_dense_display_the_dock_keeps_its_place_and_is_drawn_with_twice_the_detai
         })
     });
 }
+
+#[test]
+fn super_control_and_a_number_go_to_the_app_at_that_place_on_the_dock() {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    desktop.open("red", "red window", "ff0000", "500x300");
+    desktop.open("blue", "blue window", "0000ff", "500x300");
+
+    desktop.press(Key::Super);
+    desktop.press(Key::Control);
+    desktop.tap(Key::One);
+    eventually("the first app, red, is in front", || {
+        desktop.focused().as_deref() == Some("red window")
+    });
+
+    desktop.tap(Key::Two);
+    desktop.release(Key::Control);
+    desktop.release(Key::Super);
+    eventually("the second app, green, was started", || {
+        desktop.focused().as_deref() == Some("green window")
+    });
+}

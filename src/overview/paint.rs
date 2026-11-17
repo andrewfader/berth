@@ -11,6 +11,7 @@ pub struct Card<'a> {
     pub thumbnail: Option<&'a Pixmap>,
     pub icon: &'a Pixmap,
     pub title: Option<&'a Pixmap>,
+    pub number: Option<&'a Pixmap>,
 }
 
 pub struct Launcher<'a> {
@@ -107,6 +108,12 @@ pub fn paint(canvas: &mut PixmapMut, scene: &Scene) {
         if let Some(title) = card.title {
             centered(canvas, title, cell.center_x(), cell.bottom() - TITLE + 6.0, scale);
         }
+        if let Some(number) = card.number {
+            let tag = Rect::new(place.x + 8.0, place.y + 8.0, 26.0, 26.0);
+            let tall = number.height() as f32 / scale;
+            fill_rounded(canvas, tag, 13.0, &tint(24, 24, 28, 0.85), scale);
+            centered(canvas, number, tag.center_x(), tag.center_y() - tall / 2.0, scale);
+        }
     }
 
     for (index, (app, cell)) in scene.apps.iter().zip(&scene.places.apps).enumerate() {
@@ -153,6 +160,7 @@ mod tests {
                 thumbnail: *thumbnail,
                 icon: &icon,
                 title: Some(&text),
+                number: None,
             })
             .collect();
         let launchers: Vec<Launcher> = (0..apps)
@@ -218,11 +226,42 @@ mod tests {
                 thumbnail: Some(&red),
                 icon: &red,
                 title: None,
+                number: None,
             };
             let place = picture_place(&card, overview.places.windows[index]);
             rgba(&overview.pixmap, place.center_x(), place.y - 2.0)[1] > 200
         };
         assert!(framed(1) && !framed(0));
+    }
+
+    #[test]
+    fn a_window_can_carry_the_number_that_reaches_it_from_the_keyboard() {
+        let (red, digit, icon) = (shot(255, 0, 0), solid(10, 0, 255, 255), solid(64, 255, 255, 0));
+        let cards = [Card {
+            thumbnail: Some(&red),
+            icon: &icon,
+            title: None,
+            number: Some(&digit),
+        }];
+        let places = arrange(STAGE, 1, 0);
+        let mut pixmap = Pixmap::new(STAGE.0 as u32, STAGE.1 as u32).unwrap();
+
+        paint(
+            &mut pixmap.as_mut(),
+            &Scene {
+                places: &places,
+                windows: &cards,
+                apps: &[],
+                selected: None,
+                search: None,
+                dimness: 0.5,
+                scale: 1.0,
+            },
+        );
+
+        let place = picture_place(&cards[0], places.windows[0]);
+        assert_eq!(rgba(&pixmap, place.x + 21.0, place.y + 21.0), [0, 255, 255, 255]);
+        assert_eq!(rgba(&pixmap, place.x + 60.0, place.y + 21.0), [255, 0, 0, 255]);
     }
 
     #[test]
@@ -233,6 +272,7 @@ mod tests {
             thumbnail: None,
             icon: &shot(0, 0, 0),
             title: None,
+            number: None,
         };
         let place = picture_place(&card, overview.places.windows[0]);
         assert_eq!(
@@ -289,6 +329,7 @@ mod tests {
                 thumbnail: Some(&tall),
                 icon: &tall,
                 title: None,
+                number: None,
             },
             cell,
         );

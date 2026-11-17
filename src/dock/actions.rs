@@ -69,6 +69,17 @@ pub fn effects(action: Action, item: &DockItem, windows: &Windows) -> Vec<Effect
     }
 }
 
+pub fn go_to(position: usize, items: &[DockItem], windows: &Windows) -> Vec<Effect> {
+    let Some(item) = position.checked_sub(1).and_then(|index| items.get(index)) else {
+        return Vec::new();
+    };
+    let action = match item.active_window(windows) {
+        Some(_) => Action::Cycle,
+        None => Action::Focus,
+    };
+    effects(action, item, windows)
+}
+
 fn neighbour(item: &DockItem, active: Option<WindowId>, step: isize) -> Option<WindowId> {
     let count = item.oldest_first.len() as isize;
     let at = item.oldest_first.iter().position(|id| Some(*id) == active)? as isize;
@@ -122,6 +133,45 @@ mod tests {
         ] {
             assert_eq!(on_app("editor", action, &nothing_open), [], "{action:?}");
         }
+    }
+
+    fn shelf(windows: &Windows) -> Vec<DockItem> {
+        dock_items(&[AppId::new("browser"), AppId::new("editor")], windows, None)
+    }
+
+    #[test]
+    fn going_to_a_place_on_the_dock_raises_the_app_that_sits_there() {
+        let windows = used_in_order(&[focused(9, "browser"), window(2, "editor"), window(1, "editor")]);
+
+        assert_eq!(
+            go_to(2, &shelf(&windows), &windows),
+            [Effect::Activate(WindowId(2))]
+        );
+    }
+
+    #[test]
+    fn going_to_an_app_that_is_not_running_starts_it() {
+        let windows = used_in_order(&[focused(9, "browser")]);
+
+        assert_eq!(go_to(2, &shelf(&windows), &windows), launch("editor"));
+    }
+
+    #[test]
+    fn going_to_the_app_already_in_front_moves_on_to_its_next_window() {
+        let windows = used_in_order(&[focused(1, "editor"), window(2, "editor")]);
+
+        assert_eq!(
+            go_to(2, &shelf(&windows), &windows),
+            [Effect::Activate(WindowId(2))]
+        );
+    }
+
+    #[test]
+    fn there_is_nowhere_to_go_past_the_end_of_the_dock() {
+        let windows = Windows::default();
+
+        assert_eq!(go_to(3, &shelf(&windows), &windows), []);
+        assert_eq!(go_to(0, &shelf(&windows), &windows), []);
     }
 
     #[test]

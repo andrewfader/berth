@@ -90,6 +90,11 @@ impl Overview {
         }
     }
 
+    pub fn numbered(&self, number: usize) -> Option<Pick> {
+        let window = *self.windows().get(number.checked_sub(1)?)?;
+        Some(Pick::Window(window))
+    }
+
     pub fn step(&mut self, by: isize) {
         let count = self.picks().len() as isize;
         if count > 0 {
@@ -216,6 +221,19 @@ mod tests {
         assert_eq!(overview.selected(), Some(Pick::Window(WindowId(2))));
         overview.step(-1);
         assert_eq!(overview.selected(), Some(Pick::App(AppId::new("terminal"))));
+    }
+
+    #[test]
+    fn windows_are_numbered_from_one_in_the_order_they_are_shown() {
+        let mut overview = overview();
+
+        assert_eq!(overview.numbered(1), Some(Pick::Window(WindowId(1))));
+        assert_eq!(overview.numbered(3), Some(Pick::Window(WindowId(3))));
+        assert_eq!(overview.numbered(4), None);
+        assert_eq!(overview.numbered(0), None);
+
+        overview.typed("term");
+        assert_eq!(overview.numbered(1), Some(Pick::Window(WindowId(3))));
     }
 
     #[test]

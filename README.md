@@ -162,10 +162,15 @@ berth borrows the keyboard for the length of a left click and hands it straight
 back. To avoid even that, give `shift-click` and `ctrl-click` the same action as
 `click`; berth then never asks for the keyboard.
 
+`berth go 3` goes to the app at the third place on the dock: it raises it,
+starts it if it is not running, or steps to its next window if it is already in
+front. Bind it to keys of your choice in COSMIC's custom shortcuts.
+
 `berth windows` lists the windows berth tracks with the app id it matched them
 to, most recently used first. Those ids are what `pinned` takes.
 
-In the overview, the arrow keys and Tab move, Enter goes to the selected window
+In the overview, Ctrl with a number goes straight to the window carrying that
+number, the arrow keys and Tab move, Enter goes to the selected window
 or starts the selected app, Backspace erases, and Escape, a second tap on Super
 or a click on the backdrop closes it.
 

@@ -304,7 +304,7 @@ impl Desktop {
         fs::write(
             root.join("cfg/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"),
             format!(
-                "{{\n    (modifiers: [Super]): Spawn(\"{} overview\"),\n}}\n",
+                "{{\n    (modifiers: [Super]): Spawn(\"{0} overview\"),\n    (modifiers: [Super, Ctrl], key: \"1\"): Spawn(\"{0} go 1\"),\n    (modifiers: [Super, Ctrl], key: \"2\"): Spawn(\"{0} go 2\"),\n}}\n",
                 berth()
             ),
         )

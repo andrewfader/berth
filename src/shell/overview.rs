@@ -206,17 +206,21 @@ impl Berth {
             .iter()
             .map(|app| written(view.names.get(app)?, TEXT, 112.0))
             .collect();
+        let numbers: Vec<Option<Rc<Pixmap>>> = (1..=windows.len())
+            .map(|number| written(&number.to_string(), TEXT, 26.0).filter(|_| number <= 9))
+            .collect();
         let query = view.model.query().to_owned();
         let search = written(if query.is_empty() { HINT } else { &query }, SEARCH_TEXT, 400.0);
 
         let cards: Vec<Card> = windows
             .iter()
-            .zip(&titles)
-            .filter_map(|(window, title)| {
+            .zip(titles.iter().zip(&numbers))
+            .filter_map(|(window, (title, number))| {
                 Some(Card {
                     thumbnail: self.thumbnails.shot(*window),
                     icon: view.icons.get(&Pick::Window(*window))?,
                     title: title.as_deref(),
+                    number: number.as_deref(),
                 })
             })
             .collect();
@@ -287,6 +291,13 @@ impl Berth {
         };
         let columns = view.places().columns as isize;
         view.canvas.invalidate();
+        let digit = event.keysym.key_char().and_then(|key| key.to_digit(10));
+        if let Some(number) = digit.filter(|_| self.modifiers.ctrl) {
+            if let Some(chosen) = view.model.numbered(number as usize) {
+                self.leave_overview(Some(chosen));
+            }
+            return;
+        }
         match event.keysym {
             Keysym::Escape => self.leave_overview(None),
             Keysym::Return | Keysym::KP_Enter => {

@@ -22,6 +22,11 @@ enum Command {
     Reload,
     /// Show every window and a search for apps, or put them away again
     Overview,
+    /// Go to the app at this place on the dock, counting from 1
+    Go {
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=99))]
+        place: u8,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -45,6 +50,7 @@ fn main() -> ExitCode {
         Some(Command::Windows) => ask(Request::Windows),
         Some(Command::Reload) => ask(Request::Reload),
         Some(Command::Overview) => ask(Request::Overview),
+        Some(Command::Go { place }) => ask(Request::Go(place as usize)),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

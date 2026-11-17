@@ -158,3 +158,20 @@ fn super_held_with_another_key_is_still_a_shortcut_and_opens_nothing() {
         desktop.screenshot().brightness(30.0, 400.0) < corner_before
     });
 }
+
+#[test]
+fn control_and_a_number_go_straight_to_that_window() {
+    let mut desktop = three_windows();
+    open_with_the_super_key(&mut desktop);
+
+    desktop.press(Key::Control);
+    desktop.tap(Key::Two);
+    desktop.release(Key::Control);
+
+    eventually("the second window shown, the green one, has focus", || {
+        desktop.focused().as_deref() == Some("green window")
+    });
+    eventually("the overview is gone", || {
+        !shows_in(&desktop, places(3, 0).windows[2], RED)
+    });
+}

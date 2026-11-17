@@ -67,7 +67,8 @@ use wayland_protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
 use crate::apps::{self, Catalog};
 use crate::config::{Config, ConfigError, config_home};
 use crate::cosmic;
-use crate::dock::actions::Effect;
+use crate::dock::actions::{Effect, go_to};
+use crate::dock::items::dock_items;
 use crate::icons::Icons;
 use crate::ipc::{self, Request};
 use crate::pins::{self, Pins};
@@ -280,6 +281,13 @@ impl Berth {
                 "ok\n".to_owned()
             }
             Request::Windows => windows::listing(&self.windows),
+            Request::Go(place) => {
+                let items = dock_items(self.pins.apps(), &self.windows, None);
+                for effect in go_to(place, &items, &self.windows) {
+                    self.perform(effect);
+                }
+                "ok\n".to_owned()
+            }
             Request::Overview => {
                 self.toggle_overview();
                 "ok\n".to_owned()

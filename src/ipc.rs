@@ -24,17 +24,19 @@ pub enum Request {
     Windows,
     Reload,
     Overview,
+    Go(usize),
 }
 
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Request::Switch(Direction::Next) => "switch next",
-            Request::Switch(Direction::Previous) => "switch previous",
-            Request::Windows => "windows",
-            Request::Reload => "reload",
-            Request::Overview => "overview",
-        })
+        match self {
+            Request::Switch(Direction::Next) => f.write_str("switch next"),
+            Request::Switch(Direction::Previous) => f.write_str("switch previous"),
+            Request::Windows => f.write_str("windows"),
+            Request::Reload => f.write_str("reload"),
+            Request::Overview => f.write_str("overview"),
+            Request::Go(position) => write!(f, "go {position}"),
+        }
     }
 }
 
@@ -48,6 +50,10 @@ impl FromStr for Request {
             "windows" => Ok(Request::Windows),
             "reload" => Ok(Request::Reload),
             "overview" => Ok(Request::Overview),
+            other if other.starts_with("go ") => other[3..]
+                .parse()
+                .map(Request::Go)
+                .map_err(|_| format!("unknown request: {other}")),
             other => Err(format!("unknown request: {other}")),
         }
     }
@@ -141,9 +147,18 @@ mod tests {
             Request::Windows,
             Request::Reload,
             Request::Overview,
+            Request::Go(7),
         ] {
             assert_eq!(request.to_string().parse(), Ok(request));
         }
+    }
+
+    #[test]
+    fn a_place_that_is_not_a_number_is_not_a_request() {
+        assert_eq!(
+            "go there".parse::<Request>(),
+            Err("unknown request: go there".to_owned())
+        );
     }
 
     #[test]
