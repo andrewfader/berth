@@ -41,6 +41,7 @@ jobs:
           sway cosmic-comp cosmic-randr grim dbus mesa libxkbcommon wayland ttf-dejavu procps-ng
       - uses: actions/checkout@v5
       - run: useradd --create-home ci && chown -R ci .
+      - run: setcap -r /usr/bin/sway || true
       - name: cargo test
         shell: bash
         run: |
@@ -57,6 +58,10 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      issues: write
     steps:
       - uses: actions/checkout@v5
       - uses: rustsec/audit-check@v2
