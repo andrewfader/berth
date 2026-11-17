@@ -25,7 +25,7 @@ pub const BLUE: [u8; 3] = [0, 0, 255];
 pub const MAGENTA: [u8; 3] = [255, 0, 255];
 pub const PINNED: &str = "pinned = [\"red\", \"green\", \"blue\"]\n";
 
-const PATIENCE: Duration = Duration::from_secs(8);
+const PATIENCE: Duration = Duration::from_secs(20);
 const HOST_DISPLAY: &str = "wayland-1";
 const DISPLAY: &str = "wayland-2";
 

@@ -65,7 +65,11 @@ impl Catalog {
     }
 
     fn entry(&self, id: &str) -> Option<&DesktopEntry> {
-        find_app_by_id(&self.entries, Ascii::new(id))
+        let wanted = Ascii::new(id);
+        self.entries
+            .iter()
+            .find(|entry| Ascii::new(entry.id()) == wanted)
+            .or_else(|| find_app_by_id(&self.entries, wanted))
     }
 }
 
@@ -92,15 +96,47 @@ mod tests {
 
     fn catalog_of(entries: &[(&str, &str)]) -> (tempfile::TempDir, Catalog) {
         let dir = tempfile::tempdir().unwrap();
+        let applications = dir.path().join("applications");
         for (file, body) in entries {
+            fs::create_dir_all(applications.join(file).parent().unwrap()).unwrap();
             fs::write(
-                dir.path().join(file),
+                applications.join(file),
                 format!("[Desktop Entry]\nType=Application\n{body}\n"),
             )
             .unwrap();
         }
-        let catalog = Catalog::found_in([dir.path().to_owned()].into_iter());
+        let catalog = Catalog::found_in([applications].into_iter());
         (dir, catalog)
+    }
+
+    #[test]
+    fn an_app_is_not_mistaken_for_another_whose_file_merely_shares_its_name() {
+        let home = tempfile::tempdir().unwrap();
+        let (mine, shared) = (
+            home.path().join("mine/applications"),
+            home.path().join("shared/applications"),
+        );
+        fs::create_dir_all(mine.join("wine/Programs/Steam")).unwrap();
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(
+            mine.join("wine/Programs/Steam/Steam.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Steam\nExec=wine steam.exe\nStartupWMClass=steam.exe\n",
+        )
+        .unwrap();
+        fs::write(
+            shared.join("steam.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Steam\nExec=steam\n",
+        )
+        .unwrap();
+        let catalog = Catalog::found_in([mine, shared].into_iter());
+
+        assert_eq!(catalog.identify("steam"), AppId::new("steam"));
+        assert_eq!(catalog.pinned(&["steam".to_owned()]), [AppId::new("steam")]);
+        assert_eq!(catalog.command(&AppId::new("steam")).unwrap(), ["steam"]);
+        assert_eq!(
+            catalog.identify("steam.exe"),
+            AppId::new("wine-Programs-Steam-Steam")
+        );
     }
 
     #[test]
