@@ -94,8 +94,10 @@ pub fn berth() -> &'static str {
 fn window_program() -> PathBuf {
     static BUILT: Once = Once::new();
     BUILT.call_once(|| {
+        let beside_the_dock = Path::new(berth()).ancestors().nth(2).expect("a target directory");
         let built = Command::new(env!("CARGO"))
-            .args(["build", "--quiet", "--example", "window"])
+            .args(["build", "--quiet", "--example", "window", "--target-dir"])
+            .arg(beside_the_dock)
             .status();
         assert!(
             built.is_ok_and(|status| status.success()),
