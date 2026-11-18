@@ -8,7 +8,7 @@ use cosmic_client_toolkit::sctk::seat::pointer::{PointerEvent, PointerEventKind}
 use cosmic_client_toolkit::sctk::shell::WaylandSurface;
 use cosmic_client_toolkit::sctk::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerSurface};
 use tiny_skia::Pixmap;
-use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::protocol::{wl_output::WlOutput, wl_surface::WlSurface};
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 
 use super::Berth;
@@ -29,6 +29,7 @@ const MOST_PIXELS: f32 = 4_500_000.0;
 pub struct OverviewView {
     model: Overview,
     layer: LayerSurface,
+    hot_corner: bool,
     canvas: Canvas,
     blur: Option<ExtBackgroundEffectSurfaceV1>,
     screen: (u32, u32),
@@ -53,6 +54,10 @@ impl OverviewView {
 
     pub fn is_on(&self, surface: &WlSurface) -> bool {
         self.canvas.surface() == surface
+    }
+
+    pub fn shown_on_a_monitor_with_a_hot_corner(&mut self, hot_corner: bool) {
+        self.hot_corner = hot_corner;
     }
 
     pub fn invalidate(&mut self) {
@@ -92,8 +97,9 @@ impl OverviewView {
 }
 
 impl Berth {
-    pub(super) fn toggle_overview(&mut self) {
-        if self.overview.take().is_some() {
+    pub(super) fn toggle_overview(&mut self, output: Option<WlOutput>) {
+        if self.overview.is_some() {
+            self.close_overview(false);
             return;
         }
         self.switcher = None;
@@ -128,7 +134,7 @@ impl Berth {
             surface.clone(),
             Layer::Overlay,
             Some("berth-overview"),
-            None,
+            output.as_ref(),
         );
         layer.set_anchor(Anchor::all());
         layer.set_exclusive_zone(-1);
@@ -144,6 +150,9 @@ impl Berth {
         self.overview = Some(OverviewView {
             model: Overview::open(windows, apps),
             layer,
+            hot_corner: output
+                .as_ref()
+                .is_some_and(|output| self.hot_monitors(None).contains(output)),
             canvas: Canvas::on(surface, &self.extras, &self.qh),
             blur,
             screen: (0, 0),
@@ -152,7 +161,16 @@ impl Berth {
             icons: HashMap::new(),
             texts: HashMap::new(),
         });
+        self.corners.clear();
         self.capture_next();
+    }
+
+    pub(super) fn close_overview(&mut self, poked_closed: bool) {
+        self.overview = None;
+        if !poked_closed {
+            self.poke.left();
+        }
+        self.place_corners(None);
     }
 
     pub(super) fn overview_configured(&mut self, size: (u32, u32)) {
@@ -264,14 +282,30 @@ impl Berth {
     }
 
     pub(super) fn overview_pointer(&mut self, event: &PointerEvent) {
+        let Some(view) = &self.overview else {
+            return;
+        };
+        let at = (event.position.0 as f32, event.position.1 as f32);
+        let in_the_hot_corner =
+            view.hot_corner && self.config.overview.hot_corner.is_reached(at, view.screen);
+        if in_the_hot_corner
+            && matches!(
+                event.kind,
+                PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. }
+            )
+        {
+            if matches!(event.kind, PointerEventKind::Motion { .. }) && self.poke.arrived() {
+                self.close_overview(true);
+            }
+            return;
+        }
         let Some(view) = &mut self.overview else {
             return;
         };
-        let pointed = view
-            .places()
-            .pick_at(event.position.0 as f32, event.position.1 as f32);
+        let pointed = view.places().pick_at(at.0, at.1);
         match event.kind {
             PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
+                self.poke.left();
                 if let Some(index) = pointed.filter(|index| *index != view.model.selected_index()) {
                     view.model.select(index);
                     view.canvas.invalidate();
@@ -318,7 +352,7 @@ impl Berth {
     }
 
     fn leave_overview(&mut self, chosen: Option<Pick>) {
-        self.overview = None;
+        self.close_overview(false);
         match chosen {
             Some(Pick::Window(window)) => self.perform(Effect::Activate(window)),
             Some(Pick::App(app)) => self.perform(Effect::Launch(app)),

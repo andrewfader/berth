@@ -12,6 +12,7 @@ use crate::dock::actions::{Action, Gesture};
 use crate::dock::items::Shown;
 use crate::dock::layout::Edge;
 use crate::dock::reveal::Autohide;
+use crate::overview::corner::HotCorner;
 use crate::switcher::session::Listed;
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -128,6 +129,7 @@ impl Default for Switcher {
 pub struct Backdrop {
     pub opacity: f32,
     pub blur: bool,
+    pub hot_corner: HotCorner,
 }
 
 impl Default for Backdrop {
@@ -135,6 +137,7 @@ impl Default for Backdrop {
         Self {
             opacity: 0.6,
             blur: true,
+            hot_corner: HotCorner::TopLeft,
         }
     }
 }
@@ -429,18 +432,37 @@ mod tests {
 
     #[test]
     fn the_overview_backdrop_is_configurable() {
-        let config = Config::parse("[overview]\nopacity = 0.9\nblur = false").unwrap();
+        let config =
+            Config::parse("[overview]\nopacity = 0.9\nblur = false\nhot-corner = \"top-right\"").unwrap();
 
         assert_eq!(
             config.overview,
             Backdrop {
                 opacity: 0.9,
-                blur: false
+                blur: false,
+                hot_corner: HotCorner::TopRight,
             }
         );
         assert_eq!(
             rejection("[overview]\nopacity = 2"),
             "overview.opacity must be between 0.0 and 1.0"
+        );
+    }
+
+    #[test]
+    fn the_top_left_corner_opens_the_overview_unless_told_otherwise() {
+        assert_eq!(Config::default().overview.hot_corner, HotCorner::TopLeft);
+        assert_eq!(
+            Config::parse("[overview]\nhot-corner = \"off\"")
+                .unwrap()
+                .overview
+                .hot_corner,
+            HotCorner::Off
+        );
+        let message = rejection("[overview]\nhot-corner = \"bottom-left\"");
+        assert!(
+            message.contains("bottom-left") && message.contains("top-right"),
+            "{message}"
         );
     }
 

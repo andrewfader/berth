@@ -113,11 +113,16 @@ impl Host {
     }
 
     pub fn pointer(&mut self, x: f32, y: f32) {
+        let screen = self.devices().screen;
+        self.pointer_across(x, y, screen);
+    }
+
+    pub fn pointer_across(&mut self, x: f32, y: f32, layout: (u32, u32)) {
         let devices = self.devices();
         let now = devices.now();
         devices
             .pointer
-            .motion_absolute(now, x as u32, y as u32, devices.screen.0, devices.screen.1);
+            .motion_absolute(now, x as u32, y as u32, layout.0, layout.1);
         devices.pointer.frame();
         devices.settle();
     }

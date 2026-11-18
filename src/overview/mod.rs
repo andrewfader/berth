@@ -1,3 +1,4 @@
+pub mod corner;
 pub mod layout;
 pub mod paint;
 

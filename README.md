@@ -9,8 +9,9 @@ Wayland client: no compositor patch, no fork of COSMIC.
   swell under the pointer. It hides only when a window actually needs its space
   and returns when the pointer touches the bottom edge. What each click and
   scroll does is yours to decide, and a right-click opens a menu.
-- **Overview**: tap the Super key to spread every window out, type to narrow
-  them down or to find an app, then click or press Enter.
+- **Overview**: tap the Super key or push the pointer into the top-left
+  corner to spread every window out, type to narrow them down or to find an
+  app, then click or press Enter.
 - **Switcher**: hold Alt and tap Tab for a row of live window thumbnails over a
   dimmed, blurred desktop. Release Alt to switch.
 
@@ -117,6 +118,7 @@ launch = "cube"           # what a starting app's icon does: "cube" spins, "boun
 [overview]
 opacity = 0.6             # how dark the desktop gets behind the windows
 blur = true
+hot-corner = "top-left"   # "top-right", or "off"
 
 [switcher]
 opacity = 0.45            # how dark the desktop gets behind the row
@@ -168,6 +170,13 @@ front. Bind it to keys of your choice in COSMIC's custom shortcuts.
 
 `berth windows` lists the windows berth tracks with the app id it matched them
 to, most recently used first. Those ids are what `pinned` takes.
+
+The hot corner opens the overview when the pointer arrives in that corner of a
+monitor and closes it when the pointer comes back. It fires once per visit: leave
+the corner before poking it again. A corner that leads onto another monitor is
+not hot, because the pointer slides past it instead of stopping there; with
+monitors side by side, only the outer ones have a hot corner. It is above
+fullscreen windows too.
 
 In the overview, Ctrl with a number goes straight to the window carrying that
 number, the arrow keys and Tab move, Enter goes to the selected window

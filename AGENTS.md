@@ -72,3 +72,13 @@ Never skip, delete or weaken a scenario to get there.
   test window itself for that reason.
 - `/tmp` is mounted `noexec` on the machine this was written on. Anything the
   scenarios execute lives under `target/tmp`.
+- COSMIC hands out pointer focus lazily. A surface that appears under a resting
+  pointer hears nothing until the pointer next moves; then it may get an Enter
+  carrying the old position and a Leave in the same frame. A surface that goes
+  away can make COSMIC send a Leave and an Enter to the one below with no motion
+  at all. The hot corner therefore ignores an Enter whose Leave comes in the same
+  frame, pokes the overview only on Motion, and is taken down while the overview
+  is open instead of trusting Leave to mean the pointer went away.
+- berth's event queue can stall for a second while a debug build paints the
+  overview, so timings taken on berth's own clock between pointer events are
+  meaningless. Do not debounce on them.

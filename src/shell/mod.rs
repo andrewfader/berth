@@ -1,5 +1,6 @@
 mod canvas;
 mod capture;
+mod corner;
 mod dock;
 mod menu;
 mod overview;
@@ -25,7 +26,7 @@ use cosmic_client_toolkit::sctk::registry::{ProvidesRegistryState, RegistryState
 use cosmic_client_toolkit::sctk::seat::keyboard::{
     KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers,
 };
-use cosmic_client_toolkit::sctk::seat::pointer::{PointerEvent, PointerHandler};
+use cosmic_client_toolkit::sctk::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
 use cosmic_client_toolkit::sctk::seat::{Capability, SeatHandler, SeatState};
 use cosmic_client_toolkit::sctk::shell::wlr_layer::{
     LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
@@ -71,10 +72,12 @@ use crate::dock::actions::{Effect, go_to};
 use crate::dock::items::dock_items;
 use crate::icons::Icons;
 use crate::ipc::{self, Request};
+use crate::overview::corner::Poke;
 use crate::pins::{self, Pins};
 use crate::text::Typesetter;
 use crate::windows::{self, AppId, Window, WindowId, Windows};
 use capture::Thumbnails;
+use corner::CornerView;
 use dock::DockView;
 use menu::MenuView;
 use overview::OverviewView;
@@ -123,6 +126,8 @@ pub struct Berth {
     launching: HashMap<AppId, Duration>,
     switcher: Option<SwitcherView>,
     overview: Option<OverviewView>,
+    corners: Vec<CornerView>,
+    poke: Poke,
     thumbnails: Thumbnails,
     leaving: bool,
 }
@@ -217,6 +222,8 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         launching: HashMap::new(),
         switcher: None,
         overview: None,
+        corners: Vec::new(),
+        poke: Poke::default(),
         thumbnails: Thumbnails::default(),
         leaving: false,
     };
@@ -289,7 +296,7 @@ impl Berth {
                 "ok\n".to_owned()
             }
             Request::Overview => {
-                self.toggle_overview();
+                self.toggle_overview(None);
                 "ok\n".to_owned()
             }
             Request::Reload => match self.reload() {
@@ -311,6 +318,7 @@ impl Berth {
         for output in self.outputs.outputs().collect::<Vec<_>>() {
             self.open_dock(output);
         }
+        self.place_corners(None);
         Ok(())
     }
 
@@ -539,9 +547,15 @@ impl CompositorHandler for Berth {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &WlSurface,
-        _: &wl_output::WlOutput,
+        surface: &WlSurface,
+        output: &wl_output::WlOutput,
     ) {
+        if self.overview.as_ref().is_some_and(|view| view.is_on(surface)) {
+            let hot_corner = self.hot_monitors(None).contains(output);
+            if let Some(view) = &mut self.overview {
+                view.shown_on_a_monitor_with_a_hot_corner(hot_corner);
+            }
+        }
     }
 
     fn surface_leave(
@@ -556,10 +570,12 @@ impl CompositorHandler for Berth {
 
 impl LayerShellHandler for Berth {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
+        if self.corners.iter().any(|view| view.owns(layer)) {
+            self.corners.retain(|view| !view.owns(layer));
+        } else if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
             self.switcher = None;
         } else if self.overview.as_ref().is_some_and(|view| view.owns(layer)) {
-            self.overview = None;
+            self.close_overview(false);
         } else {
             log::warn!("the compositor closed a dock");
             self.close_docks(|dock| dock.owns(layer));
@@ -574,7 +590,9 @@ impl LayerShellHandler for Berth {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
+        if self.corners.iter().any(|view| view.owns(layer)) {
+            self.corner_configured(layer);
+        } else if self.switcher.as_ref().is_some_and(|view| view.owns(layer)) {
             self.switcher_configured(configure.new_size);
         } else if self.overview.as_ref().is_some_and(|view| view.owns(layer)) {
             self.overview_configured(configure.new_size);
@@ -642,11 +660,16 @@ impl PointerHandler for Berth {
         _: &WlPointer,
         events: &[PointerEvent],
     ) {
-        for event in events {
+        for (index, event) in events.iter().enumerate() {
             if let Some(at) = self.dock_at(&event.surface) {
                 self.dock_pointer(at, event);
             } else if self.menu.as_ref().is_some_and(|menu| menu.is_on(&event.surface)) {
                 self.menu_pointer(event);
+            } else if self.corners.iter().any(|view| view.is_on(&event.surface)) {
+                let left_at_once = events[index + 1..].iter().any(|later| {
+                    later.surface == event.surface && matches!(later.kind, PointerEventKind::Leave { .. })
+                });
+                self.corner_pointer(event, left_at_once);
             } else if self
                 .overview
                 .as_ref()
@@ -725,14 +748,17 @@ impl OutputHandler for Berth {
 
     fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
         self.open_dock(output);
+        self.place_corners(None);
     }
 
     fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
         self.output_changed(&output);
+        self.place_corners(None);
     }
 
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
         self.close_docks(|dock| dock.is_for(&output));
+        self.place_corners(Some(&output));
     }
 }
 

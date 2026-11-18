@@ -505,6 +505,10 @@ impl Desktop {
         self.host.pointer(x, y);
     }
 
+    pub fn pointer_across(&mut self, x: f32, y: f32, layout: (u32, u32)) {
+        self.host.pointer_across(x, y, layout);
+    }
+
     pub fn click(&mut self, button: Button) {
         self.host.click(button);
     }
@@ -601,7 +605,7 @@ impl Desktop {
             .env_remove("I3SOCK")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .process_group(0);
         command
     }
