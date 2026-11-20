@@ -62,6 +62,31 @@ fn clicking_a_pinned_app_starts_it() {
 }
 
 #[test]
+fn an_app_started_from_the_dock_runs_in_a_scope_of_its_own() {
+    let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
+    desktop.give_it_a_user_manager();
+
+    desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Left);
+
+    eventually("the red app has opened a window", || {
+        desktop.focused().as_deref() == Some("red window")
+    });
+    let asked = desktop.scopes_asked_of_the_user_manager();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    let words: Vec<&str> = asked[0].split(' ').collect();
+    assert!(words.starts_with(&["--user", "--scope"]), "{asked:?}");
+    assert!(words.contains(&"--slice=app.slice"), "{asked:?}");
+    let unit = words
+        .iter()
+        .find_map(|word| word.strip_prefix("--unit="))
+        .unwrap();
+    assert!(
+        unit.starts_with("app-berth-red-") && unit.ends_with(".scope"),
+        "{unit}"
+    );
+}
+
+#[test]
 fn an_app_started_from_the_dock_can_be_asked_to_quit_like_any_other() {
     let mut desktop = Desktop::with_dock(&format!("[dock]\n{PINNED}"));
     desktop.click_at(icon(0).center_x(), icon(0).center_y(), Button::Left);

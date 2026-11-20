@@ -325,7 +325,7 @@ impl Berth {
     fn perform(&mut self, effect: Effect) {
         match effect {
             Effect::Launch(app) => match self.catalog.command(&app) {
-                Some(command) => match apps::launch(&command) {
+                Some(command) => match apps::launch(&app, &command) {
                     Ok(()) => {
                         self.launching.insert(app, self.now());
                         self.refresh_dock_items();

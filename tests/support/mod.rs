@@ -286,6 +286,15 @@ impl Desktop {
             fs::set_permissions(root.join("shim").join(stub), fs::Permissions::from_mode(0o755)).unwrap();
         }
         fs::write(
+            root.join("shim/systemd-run"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n",
+                root.join("systemd-run.log").display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(root.join("shim/systemd-run"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
             root.join("sway.conf"),
             format!(
                 "output HEADLESS-1 resolution {}x{} scale 1\ndefault_border none\n",
@@ -436,6 +445,19 @@ impl Desktop {
 
     pub fn socket(&self) -> PathBuf {
         self.root.join("rt").join(format!("berth-{}.sock", self.display))
+    }
+
+    pub fn give_it_a_user_manager(&self) {
+        fs::create_dir_all(self.root.join("rt/systemd")).unwrap();
+        fs::write(self.root.join("rt/systemd/private"), "").unwrap();
+    }
+
+    pub fn scopes_asked_of_the_user_manager(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("systemd-run.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     pub fn ask_launched_app_to_quit(&self, app: &str) {

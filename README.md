@@ -50,8 +50,9 @@ systemctl --user enable --now berth.service
 ```
 
 `Restart=on-failure` brings berth back if it crashes or the compositor restarts.
-`KillMode=process` keeps the apps you started from the dock running through
-such a restart. Plugging and unplugging monitors needs no restart: each monitor
+Apps started from the dock live in scopes of their own, so they keep running
+through such a restart; `KillMode=process` keeps it so for apps started without
+a user manager. Plugging and unplugging monitors needs no restart: each monitor
 gets a dock when it appears and loses it when it goes.
 
 ### Replace COSMIC's own dock and switcher
@@ -194,6 +195,13 @@ a click on a window switches to it.
   switch, list windows and reload.
 - Apps are started from their desktop entry without a shell, and berth never
   logs its environment.
+- Each app starts in a systemd scope of its own,
+  `app-berth-<app id>-<random>.scope` under `app.slice`, as
+  [systemd's desktop conventions](https://systemd.io/DESKTOP_ENVIRONMENTS/)
+  describe. The kernel records that scope on every process and socket the app
+  makes, so `systemd-cgls`, `ss -e` and monitoring tools can tell apps apart
+  from each other and from berth, and `systemctl --user` can limit or stop one
+  app. Without a systemd user manager apps start as plain children of berth.
 - Icon files larger than 8 MiB, and PNGs claiming more than 4096 pixels a side,
   are not decoded; the app gets a lettered tile instead.
 - The release build aborts on a bug instead of limping on; the user service

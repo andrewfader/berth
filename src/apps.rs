@@ -1,6 +1,8 @@
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::io;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 
@@ -91,9 +93,26 @@ impl Catalog {
     }
 }
 
-pub fn launch(command: &[String]) -> io::Result<()> {
+pub fn launch(app: &AppId, command: &[String]) -> io::Result<()> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    launch_with(&runtime, app, command)
+}
+
+fn launch_with(runtime: &Path, app: &AppId, command: &[String]) -> io::Result<()> {
     let (program, arguments) = command.split_first().ok_or(io::ErrorKind::InvalidInput)?;
-    let mut command = Command::new(program);
+    let mut command = if runtime.join("systemd/private").exists() {
+        let mut scoped = Command::new("systemd-run");
+        scoped
+            .args(["--user", "--scope", "--quiet", "--collect", "--slice=app.slice"])
+            .arg(format!("--unit={}", scope_for(app)))
+            .arg("--")
+            .arg(program);
+        scoped
+    } else {
+        Command::new(program)
+    };
     command
         .args(arguments)
         .stdin(Stdio::null())
@@ -104,6 +123,23 @@ pub fn launch(command: &[String]) -> io::Result<()> {
     let mut child = command.spawn()?;
     thread::spawn(move || child.wait());
     Ok(())
+}
+
+fn scope_for(app: &AppId) -> String {
+    let start = RandomState::new().build_hasher().finish();
+    format!("app-berth-{}-{start:016x}.scope", unit_escaped(app.as_str()))
+}
+
+fn unit_escaped(id: &str) -> String {
+    id.bytes()
+        .enumerate()
+        .map(|(at, byte)| match byte {
+            b'/' => "-".to_owned(),
+            b'.' if at == 0 => format!("\\x{byte:02x}"),
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b':' | b'_' | b'.' => char::from(byte).to_string(),
+            _ => format!("\\x{byte:02x}"),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -248,12 +284,88 @@ mod tests {
         assert_eq!(listed, ["browser", "Zed"]);
     }
 
+    fn eventually_exists(path: &std::path::Path) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        path.exists()
+    }
+
+    #[test]
+    fn an_app_gets_a_scope_named_for_berth_and_the_app() {
+        let scope = scope_for(&AppId::new("org.mozilla.firefox"));
+
+        assert!(scope.starts_with("app-berth-org.mozilla.firefox-"), "{scope}");
+        assert!(scope.ends_with(".scope"), "{scope}");
+    }
+
+    #[test]
+    fn dashes_and_odd_characters_in_an_app_id_are_escaped_the_way_systemd_does() {
+        assert!(scope_for(&AppId::new("my-app")).starts_with("app-berth-my\\x2dapp-"));
+        assert!(scope_for(&AppId::new("a b/c")).starts_with("app-berth-a\\x20b-c-"));
+        assert!(scope_for(&AppId::new(".hidden")).starts_with("app-berth-\\x2ehidden-"));
+    }
+
+    #[test]
+    fn starting_an_app_twice_gives_each_start_its_own_scope() {
+        let app = AppId::new("editor");
+
+        assert_ne!(scope_for(&app), scope_for(&app));
+    }
+
+    #[test]
+    fn under_a_user_manager_a_started_app_runs_inside_its_own_scope() {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        assert!(
+            runtime.join("systemd/private").exists(),
+            "this spec needs the systemd user manager of a real session"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("cgroup");
+        let copy = format!(
+            "cat /proc/self/cgroup > {}.part && mv {0}.part {0}",
+            marker.display()
+        );
+
+        launch(&AppId::new("berth-spec"), &["sh".into(), "-c".into(), copy]).unwrap();
+
+        assert!(eventually_exists(&marker));
+        let cgroup = fs::read_to_string(&marker).unwrap();
+        assert!(
+            cgroup.contains("/app.slice/app-berth-berth\\x2dspec-"),
+            "{cgroup}"
+        );
+        assert!(cgroup.trim_end().ends_with(".scope"), "{cgroup}");
+    }
+
+    #[test]
+    fn without_a_user_manager_an_app_still_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("started");
+
+        launch_with(
+            dir.path(),
+            &AppId::new("touch"),
+            &["touch".into(), marker.to_string_lossy().into_owned()],
+        )
+        .unwrap();
+
+        assert!(eventually_exists(&marker));
+    }
+
     #[test]
     fn launching_starts_the_program_with_its_arguments() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("started");
 
-        launch(&["touch".into(), marker.to_string_lossy().into_owned()]).unwrap();
+        launch(
+            &AppId::new("touch"),
+            &["touch".into(), marker.to_string_lossy().into_owned()],
+        )
+        .unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(5);
         while !marker.exists() && Instant::now() < deadline {
@@ -264,7 +376,9 @@ mod tests {
 
     #[test]
     fn a_program_that_cannot_be_started_is_reported() {
-        assert!(launch(&["/nonexistent/berth-test-program".into()]).is_err());
-        assert!(launch(&[]).is_err());
+        let nowhere = tempfile::tempdir().unwrap();
+        let app = AppId::new("missing");
+        assert!(launch_with(nowhere.path(), &app, &["/nonexistent/berth-test-program".into()]).is_err());
+        assert!(launch(&app, &[]).is_err());
     }
 }
